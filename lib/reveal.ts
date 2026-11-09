@@ -4,6 +4,7 @@ import { getStore, type Player, type Round } from "./store";
 import { RoundError, roundStatus } from "./rounds";
 import { banish, unbanish } from "./game";
 import { resolveOutcome, type Outcome } from "./outcome";
+import { scriptBeats, scriptCard, type ScriptBeat, type ScriptCard } from "./script";
 import * as pace from "./pacing";
 import { suspensefulOrder, winners, type VotePair } from "./suspense";
 
@@ -30,7 +31,15 @@ export type Step = StepBase &
     | { kind: "final" }
   );
 
-export type RevealSettings = { channel: string; channelName: string; standingsEvery: number };
+export type RevealMode = "slack" | "in-person";
+
+export type RevealSettings = {
+  /** "in-person": nothing is posted in Slack; the host follows a script on the round page. */
+  mode?: RevealMode;
+  channel: string;
+  channelName: string;
+  standingsEvery: number;
+};
 
 export type RevealState = RevealSettings & {
   roundId: string;
@@ -39,6 +48,8 @@ export type RevealState = RevealSettings & {
   /** Missing on reveals started before tiebreaks existed. */
   outcome?: Outcome;
   plan: Step[];
+  /** Face-to-face reveals only: the script, in order. `next` counts the cards shown so far. */
+  beats?: ScriptBeat[];
   next: number;
   nextAt: string;
   status: "running" | "paused" | "done";
@@ -51,6 +62,9 @@ export type RevealState = RevealSettings & {
 
 /** What the admin page sees: only what has already been posted, so the host isn't spoiled either. */
 export type RevealView = {
+  mode: RevealMode;
+  /** Face-to-face reveals: the whole script. Cards before `stepsDone` have been reached. */
+  script?: ScriptCard[];
   status: RevealState["status"];
   channelName: string;
   stepsDone: number;
@@ -334,11 +348,14 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
   const name = playerName(round);
   const done = state.plan.slice(0, state.next);
   const named = (o: VotePair[]) => tally(o).map(([id, count]) => ({ name: name(id), count }));
+  const inPerson = state.mode === "in-person";
   const view: RevealView = {
+    mode: inPerson ? "in-person" : "slack",
+    ...(inPerson ? { script: (state.beats ?? []).map((b) => scriptCard(b, round, state.order, outcomeOf(state))) } : {}),
     status: state.status,
     channelName: state.channelName,
     stepsDone: state.next,
-    stepsTotal: state.plan.length,
+    stepsTotal: inPerson ? (state.beats?.length ?? 0) : state.plan.length,
     msUntilNext: state.status === "running" ? Math.max(0, Date.parse(state.nextAt) - Date.now()) : 0,
     error: state.error,
     revealed: done.flatMap((s) =>
@@ -374,7 +391,8 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   if (roundStatus(round) !== "closed") throw new RoundError("Close voting before starting the reveal.");
   const existing = await getReveal(roundId);
   if (existing) throw new RoundError("This reveal has already been started. Reset it to start again.");
-  if (!settings.channel) throw new RoundError("Choose a channel to reveal in.");
+  const inPerson = settings.mode === "in-person";
+  if (!inPerson && !settings.channel) throw new RoundError("Choose a channel to reveal in.");
 
   const standingsEvery = clamp(Math.round(settings.standingsEvery ?? 3), 0, 50);
   const eligible = new Set(round.players.map((p) => p.id));
@@ -388,13 +406,14 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   const state: RevealState = {
     roundId,
     runId: crypto.randomUUID().slice(0, 8),
-    channel: settings.channel,
-    channelName: settings.channelName,
+    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome) } : {}),
+    channel: inPerson ? "" : settings.channel,
+    channelName: inPerson ? "" : settings.channelName,
     standingsEvery,
     order,
     outcome,
-    plan: buildPlan(order, outcome, standingsEvery),
-    next: 0,
+    plan: inPerson ? [] : buildPlan(order, outcome, standingsEvery),
+    next: inPerson ? 1 : 0, // face to face: the opening card is showing straight away
     nextAt: new Date(now).toISOString(),
     status: "running",
     startedAt: new Date(now).toISOString(),
@@ -402,12 +421,34 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     tsByVoter: {},
   };
   await store.setJSON(stateKey(roundId), state);
+  const previous = await getRevealDefaults();
   await store.setJSON(DEFAULTS_KEY, {
-    channel: state.channel,
-    channelName: state.channelName,
+    mode: inPerson ? "in-person" : "slack",
+    channel: inPerson ? (previous.channel ?? "") : state.channel,
+    channelName: inPerson ? (previous.channelName ?? "") : state.channelName,
     standingsEvery,
   } satisfies RevealSettings);
-  return stepReveal(roundId);
+  return inPerson ? toView(state, round) : stepReveal(roundId);
+}
+
+/** Face-to-face reveals: move through the script. Finishing it records the banished player. */
+export async function moveScript(roundId: string, delta: 1 | -1) {
+  const store = getStore();
+  const round = await loadRound(roundId);
+  const state = await getReveal(roundId);
+  if (!state || state.mode !== "in-person") return toView(state, round);
+  const total = state.beats?.length ?? 0;
+  const next = clamp(state.next + delta, 1, total);
+  if (next === state.next) return toView(state, round);
+
+  const wasDone = state.status === "done";
+  state.next = next;
+  state.status = next >= total ? "done" : "running";
+  state.finishedAt = state.status === "done" ? new Date().toISOString() : undefined;
+  await store.setJSON(stateKey(roundId), state);
+  if (state.status === "done" && !wasDone) await recordBanished(round, state);
+  if (wasDone && state.status !== "done" && round.gameId && !round.test) await unbanish(round.gameId, { roundId });
+  return toView(state, round);
 }
 
 async function perform(step: Step, state: RevealState, round: Round): Promise<Record<string, string>> {
@@ -460,6 +501,7 @@ export async function stepReveal(roundId: string, opts: { force?: boolean } = {}
   const round = await loadRound(roundId);
   const state = await getReveal(roundId);
   if (!state || state.status !== "running") return toView(state, round);
+  if (state.mode === "in-person") return opts.force ? moveScript(roundId, 1) : toView(state, round);
   if (!opts.force && Date.now() < Date.parse(state.nextAt) - 250) return toView(state, round);
 
   const i = state.next;

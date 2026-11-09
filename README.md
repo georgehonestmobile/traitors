@@ -34,6 +34,17 @@ The bot posts in the chosen channel:
 
 **Pacing is driven by the admin page**, so no scheduler is needed: keep the round's page open while the reveal runs. Closing it pauses the reveal; reopening the page carries on where it left off. Pause, Resume and "Post next now" are on the page. Each step is claimed atomically in Redis, so two open tabs can't double-post. Reset lets you run it again (posts already in Slack stay).
 
+## Face-to-face reveals
+
+For banishments done in person, choose **🗣️ Face to face** when starting the reveal. Nothing is posted in Slack. Instead the round page shows a script, one card at a time (Next / Back, or the ← → keys):
+
+- **Opening** lines, including who didn't vote.
+- **Each vote**, in the same suspenseful order as Slack reveals: who to call on, the vote they recorded (host only, so you can pull them up if they say a different name), and the running count.
+- **Ties, recounts and straw draws**, with lines to read out.
+- **The verdict.** Finishing the script banishes that player in the current game (going back un-does it).
+
+"Full script" shows every card at once for preparation.
+
 ## Games, banished players and who's playing
 
 - **Games:** rounds belong to the current game (shown top right of the dashboard). When a real round's reveal finishes, the banished player is added to the game's **Banished** list and greyed out in the player picker for the rest of that game. You can also **mark someone as banished** by hand, or click × to bring them back. **New game** starts a fresh game with nobody banished; older rounds move under "Earlier rounds". Test rounds never banish anyone.

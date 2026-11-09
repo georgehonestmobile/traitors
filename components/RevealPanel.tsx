@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { RevealSettings, RevealView } from "@/lib/reveal";
+import type { RevealMode, RevealSettings, RevealView } from "@/lib/reveal";
+import { ScriptPanel } from "./ScriptPanel";
 import type { RoundStatus } from "@/lib/rounds";
 import type { Channel } from "@/lib/slack";
 import { estimateSeconds, MAX_GAP, MIN_GAP } from "@/lib/pacing";
@@ -33,6 +34,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
     channels.some((c) => c.id === defaults.channel) ? defaults.channel! : (channels[0]?.id ?? ""),
   );
   const [every, setEvery] = useState(defaults.standingsEvery ?? 3);
+  const [mode, setMode] = useState<RevealMode>(defaults.mode ?? "slack");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
@@ -64,7 +66,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
 
   // Drive the reveal: whenever a step is due, ask the server to post it.
   useEffect(() => {
-    if (view?.status !== "running") return;
+    if (view?.status !== "running" || view.mode === "in-person") return;
     let cancelled = false;
     const wait = Math.max(400, view.msUntilNext - (Date.now() - receivedAt.current));
     const timer = setTimeout(async () => {
@@ -86,7 +88,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
 
   // Countdown text.
   useEffect(() => {
-    if (view?.status !== "running") return;
+    if (view?.status !== "running" || view.mode === "in-person") return;
     const tick = () =>
       setCountdown(Math.max(0, Math.ceil((view.msUntilNext - (Date.now() - receivedAt.current)) / 1000)));
     tick();
@@ -105,16 +107,31 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
 
   /* ---------- Not started: settings ---------- */
   if (!view) {
-    const canStart = roundStatus === "closed" && !!channel && !busy;
+    const inPerson = mode === "in-person";
+    const canStart = roundStatus === "closed" && (inPerson || !!channel) && !busy;
     const chosen = channels.find((c) => c.id === channel);
     return (
       <section className="panel">
         <h2 className="panel-title">The reveal</h2>
         <p className="panel-sub">
-          Votes are revealed one at a time in a Slack channel, in the order that keeps everyone guessing longest.
+          Votes are revealed one at a time, in the order that keeps everyone guessing longest.
         </p>
 
-        {channelsError ? (
+        <div className="field">
+          <div className="label"><span>Where</span></div>
+          <div className="chips">
+            <button type="button" className={`chip${!inPerson ? " on" : ""}`} onClick={() => setMode("slack")}>📣 In Slack</button>
+            <button type="button" className={`chip${inPerson ? " on" : ""}`} onClick={() => setMode("in-person")}>🗣️ Face to face</button>
+          </div>
+          {inPerson && (
+            <p className="hint">
+              Nothing is posted in Slack. You get a script here: who to call on next, the vote they recorded (so you can
+              pull them up if they say a different name), and the running count.
+            </p>
+          )}
+        </div>
+
+        {inPerson ? null : channelsError ? (
           <div className="error">Couldn&apos;t load Slack channels: {channelsError}</div>
         ) : (
           <div className="field">
@@ -131,6 +148,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
           </div>
         )}
 
+        {!inPerson && (<>
         <div className="field">
           <div className="label"><span>Pace</span></div>
           <p className="hint" style={{ marginTop: 0 }}>
@@ -150,10 +168,16 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
             ))}
           </div>
         </div>
+        </>)}
 
         <div className="summary">
           {roundStatus !== "closed" ? (
             <>Voting is still open. Close it, or wait for the deadline, before revealing.</>
+          ) : inPerson ? (
+            <>
+              <b>{votesCast}</b> {votesCast === 1 ? "vote" : "votes"} to reveal face to face. Move through the script with
+              Next, or the arrow keys.
+            </>
           ) : (
             <>
               <b>{votesCast}</b> {votesCast === 1 ? "vote" : "votes"} will be revealed in{" "}
@@ -170,13 +194,17 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
           className="btn primary block"
           disabled={!canStart}
           onClick={() =>
-            run("start", { channel, channelName: chosen?.name ?? "", standingsEvery: every })
+            run("start", { mode, channel, channelName: chosen?.name ?? "", standingsEvery: every })
           }
         >
-          {busy ? "Starting…" : "Begin the reveal"}
+          {busy ? "Starting…" : inPerson ? "Start the script" : "Begin the reveal"}
         </button>
       </section>
     );
+  }
+
+  if (view.mode === "in-person") {
+    return <ScriptPanel view={view} busy={busy} error={error} onAction={(a) => run(a)} />;
   }
 
   /* ---------- Running / paused / done ---------- */
