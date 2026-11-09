@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
+import { getReveal, getRevealDefaults, toView } from "@/lib/reveal";
 import { roundStatus } from "@/lib/rounds";
+import { listChannels, type Channel } from "@/lib/slack";
 import { getStore } from "@/lib/store";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { Avatar } from "@/components/Avatar";
+import { RevealPanel } from "@/components/RevealPanel";
 import { RoundActions } from "@/components/RoundActions";
 import { StatusPill } from "@/components/StatusPill";
 import { TopBar } from "@/components/TopBar";
@@ -23,6 +26,15 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const votedAt = new Map(votes.map((v) => [v.voterId, v.at]));
   const now = Date.now();
   const status = roundStatus(round, now);
+  let channels: Channel[] = [];
+  let channelsError: string | null = null;
+  try {
+    channels = await listChannels();
+  } catch (e) {
+    channelsError = e instanceof Error ? e.message : String(e);
+  }
+  const [reveal, revealDefaults] = await Promise.all([getReveal(id), getRevealDefaults()]);
+
   const pct = Math.round((votes.length / round.players.length) * 100);
   const closedAt = round.closedEarlyAt && Date.parse(round.closedEarlyAt) < Date.parse(round.closesAt) ? round.closedEarlyAt : round.closesAt;
 
@@ -79,12 +91,22 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           </table>
         </section>
 
-        <section className="panel">
-          <h2 className="panel-title">Turnout</h2>
-          <div className="stat"><span className="big">{votes.length}</span><span className="muted">of {round.players.length} have voted</span></div>
-          <div className="progress"><span style={{ width: `${pct}%` }} /></div>
-          <div className="sealed">🔒 Who voted for whom stays sealed here. The tally and reveal come next.</div>
-        </section>
+        <div className="side">
+          <section className="panel">
+            <h2 className="panel-title">Turnout</h2>
+            <div className="stat"><span className="big">{votes.length}</span><span className="muted">of {round.players.length} have voted</span></div>
+            <div className="progress"><span style={{ width: `${pct}%` }} /></div>
+          </section>
+          <RevealPanel
+            roundId={round.id}
+            roundStatus={status}
+            votesCast={votes.length}
+            channels={channels}
+            channelsError={channelsError}
+            defaults={revealDefaults}
+            initialView={toView(reveal, round)}
+          />
+        </div>
       </div>
     </div>
   );

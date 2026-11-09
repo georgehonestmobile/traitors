@@ -15,7 +15,20 @@ Built with Next.js on Vercel, Upstash Redis for storage, and the Slack Web API.
 4. The DM is replaced with "Your vote is locked in: Adam". Late votes are rejected and the DM says so.
 5. In the GUI you can watch turnout live, close voting early, or cancel a round (scheduled DMs are deleted, sent ones are marked cancelled).
 
-Who voted for whom is stored (`votes:<roundId>` in Redis) but not shown yet: that's for the tally/reveal screen.
+6. After voting closes, run **the reveal** from the round's page: pick a Slack channel, the pace, and how often to post the running count, then press **Begin the reveal**.
+
+## The reveal
+
+The bot posts in the chosen channel:
+
+1. An opener: how many voted, and who didn't.
+2. For each vote: "*Jack* picks up their slate…", then a few seconds later the same message changes to "*Jack* votes for… *ADAM*".
+3. The running count every few votes (configurable).
+4. The verdict: who is banished, or a tie for the host to settle, with the final count.
+
+**Suspense ordering** (`lib/suspense.ts`): the app tries many orderings and keeps the one where the result becomes mathematically certain as late as possible, the gap between first and second stays small, the eventual loser doesn't lead alone early, and the lead changes hands when it can. A 6–4 split comes out like `B A A B B A B A A A`.
+
+**Pacing is driven by the admin page**, so no scheduler is needed: keep the round's page open while the reveal runs. Closing it pauses the reveal; reopening the page carries on where it left off. Pause, Resume and "Post next now" are on the page. Each step is claimed atomically in Redis, so two open tabs can't double-post. Reset lets you run it again (posts already in Slack stay).
 
 ## Setup
 
@@ -38,7 +51,9 @@ Who voted for whom is stored (`votes:<roundId>` in Redis) but not shown yet: tha
 5. Copy **Basic Information → Signing Secret** into `SLACK_SIGNING_SECRET` on Vercel.
 6. Redeploy on Vercel so the new env vars are picked up.
 
-Scopes used: `chat:write` (send/update DMs), `im:write` (open DMs), `users:read` (list members for the player picker).
+Scopes used: `chat:write` (send/update messages), `chat:write.public` (post the reveal in public channels without joining), `im:write` (open DMs), `users:read` (list members for the player picker), `channels:read` and `groups:read` (list channels for the reveal). Private channels appear once you've run `/invite @Round Table` in them.
+
+**Adding scopes to an existing app:** in your Slack app, go to **OAuth & Permissions → Scopes → Bot Token Scopes**, add the missing ones, then **reinstall** the app when Slack prompts you. If the Bot User OAuth Token changes, update `SLACK_BOT_TOKEN` on Vercel and redeploy.
 
 ## Local development
 
@@ -57,3 +72,4 @@ To test real Slack DMs locally, Slack needs a public URL for interactivity: run 
 - Deadlines are enforced server-side using the server clock, not Slack's. Times in the GUI use `APP_TIMEZONE`; in Slack each player sees times in their own timezone.
 - Slack can only schedule messages up to 120 days ahead.
 - Votes are final. Players can vote for themselves.
+- Reveals are named: everyone sees who voted for whom, like the show.

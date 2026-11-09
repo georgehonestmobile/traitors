@@ -208,3 +208,26 @@ table.players-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .login .wordmark { justify-content: center; font-size: 22px; margin-bottom: 8px; }
 .login p { color: var(--muted); margin: 0 0 24px; }
 .login form { display: flex; flex-direction: column; gap: 12px; }
+
+/* Reveal */
+select {
+  width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: 8px; padding: 10px 12px; font: inherit; color-scheme: dark;
+}
+select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.hint { color: var(--faint); font-size: 12.5px; margin: 8px 0 0; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; color: var(--muted); }
+.side { display: flex; flex-direction: column; gap: 24px; }
+.reveal-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+.revealed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; max-height: 300px; overflow-y: auto; }
+.revealed li { padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
+.revealed li:first-child { border-color: var(--border-strong); }
+.result { margin-bottom: 18px; }
+.bar-row { display: grid; grid-template-columns: minmax(70px, 120px) 1fr 28px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+.bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 10px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--border-strong); border-radius: 999px; }
+.bar-row.top .bar > span { background: linear-gradient(90deg, var(--crimson), var(--crimson-hi)); }
+.bar-row.top .bar-name { color: #f3a39c; font-weight: 600; }
+.bar-n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.verdict { font-family: var(--font-display), Georgia, serif; color: var(--gold); letter-spacing: 0.04em; margin: 12px 0 0; }

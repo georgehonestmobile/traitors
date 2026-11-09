@@ -68,6 +68,41 @@ export async function listPlayers(): Promise<Player[]> {
   return players.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export type Channel = { id: string; name: string; isPrivate: boolean };
+
+/** Public channels, plus private channels the bot has been invited to. */
+export async function listChannels(): Promise<Channel[]> {
+  if (isDemo()) {
+    return [
+      { id: "CDEMO001", name: "round-table", isPrivate: false },
+      { id: "CDEMO002", name: "general", isPrivate: false },
+      { id: "GDEMO003", name: "traitors-hosts", isPrivate: true },
+    ];
+  }
+  const channels: Channel[] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      limit: "1000",
+      exclude_archived: "true",
+      types: "public_channel,private_channel",
+    });
+    if (cursor) params.set("cursor", cursor);
+    const res = await fetch(`${API}conversations.list?${params}`, {
+      headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+      cache: "no-store",
+    });
+    const data = (await res.json()) as SlackResponse & {
+      channels?: { id: string; name: string; is_private?: boolean }[];
+      response_metadata?: { next_cursor?: string };
+    };
+    if (!data.ok) throw new Error(`Slack conversations.list failed: ${data.error}`);
+    for (const c of data.channels ?? []) channels.push({ id: c.id, name: c.name, isPrivate: !!c.is_private });
+    cursor = data.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+  return channels.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function openDm(userId: string): Promise<string> {
   if (isDemo()) return `DDEMO-${userId}`;
   const res = await call<SlackResponse & { channel: { id: string } }>("conversations.open", { users: userId });

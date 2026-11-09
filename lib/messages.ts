@@ -32,7 +32,7 @@ export function voteMessage(round: Round, voter: Player): Message {
       { type: "header", text: { type: "plain_text", text: "🗡️ The Round Table has gathered", emoji: true } },
       section(
         `*${esc(round.title)}*\n\nThe time has come. Who do you believe is a *Traitor*?\n\n` +
-          `Voting closes *${slackDate(round.closesAt)}*. Your vote is secret and *final* once cast.`,
+          `Voting closes *${slackDate(round.closesAt)}*. Your vote is *final* once cast, and will be revealed at the Round Table.`,
       ),
       {
         type: "actions",

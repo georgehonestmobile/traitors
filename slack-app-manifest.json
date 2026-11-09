@@ -17,13 +17,20 @@
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["chat:write", "im:write", "users:read"]
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "im:write",
+        "users:read",
+        "channels:read",
+        "groups:read"
+      ]
     }
   },
   "settings": {
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://YOUR-APP.vercel.app/api/slack/interactions"
+      "request_url": "https://traitors-five.vercel.app/api/slack/interactions"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,

@@ -37,6 +37,10 @@ export interface Store {
   /** Records a vote only if this voter hasn't voted in this round. Returns false if they already had. */
   castVote(roundId: string, vote: Vote): Promise<boolean>;
   getVotes(roundId: string): Promise<Vote[]>;
+  getJSON<T>(key: string): Promise<T | null>;
+  setJSON(key: string, value: unknown): Promise<void>;
+  /** Atomic "claim": true for the first caller only, until ttl expires. */
+  claim(key: string, ttlSeconds: number): Promise<boolean>;
 }
 
 const roundKey = (id: string) => `round:${id}`;
@@ -72,6 +76,16 @@ class RedisStore implements Store {
     const all = await this.redis.hgetall<Record<string, Vote>>(votesKey(roundId));
     return Object.values(all ?? {});
   }
+
+  async getJSON<T>(key: string) {
+    return (await this.redis.get<T>(key)) ?? null;
+  }
+  async setJSON(key: string, value: unknown) {
+    await this.redis.set(key, value);
+  }
+  async claim(key: string, ttlSeconds: number) {
+    return (await this.redis.set(key, 1, { nx: true, ex: ttlSeconds })) === "OK";
+  }
 }
 
 /** Dev-only fallback. Data is lost when the server restarts. */
@@ -102,6 +116,21 @@ class MemoryStore implements Store {
   }
   async getVotes(roundId: string) {
     return [...(this.votes.get(roundId)?.values() ?? [])];
+  }
+  private kv = new Map<string, unknown>();
+  private claims = new Map<string, number>();
+  async getJSON<T>(key: string) {
+    const v = this.kv.get(key);
+    return v === undefined ? null : (structuredClone(v) as T);
+  }
+  async setJSON(key: string, value: unknown) {
+    this.kv.set(key, structuredClone(value));
+  }
+  async claim(key: string, ttlSeconds: number) {
+    const until = this.claims.get(key);
+    if (until && until > Date.now()) return false;
+    this.claims.set(key, Date.now() + ttlSeconds * 1000);
+    return true;
   }
 }
 
