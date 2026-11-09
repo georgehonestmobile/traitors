@@ -252,9 +252,11 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
           <p className="verdict">
             {view.result.banished.length === 0
               ? "No votes were cast."
-              : !view.result.unresolved
-                ? `${view.result.banished[0]} is banished${view.result.recount ? " after the tiebreak" : ""}.`
-                : `Still tied: ${view.result.banished.join(" and ")}. Your call.`}
+              : view.result.drawnFrom
+                ? `${view.result.banished[0]} drew the short straw (from ${view.result.drawnFrom.join(", ")}) and is banished.`
+                : !view.result.unresolved
+                  ? `${view.result.banished[0]} is banished${view.result.recount ? " after the tiebreak" : ""}.`
+                  : `Still tied: ${view.result.banished.join(" and ")}. Your call.`}
           </p>
         </div>
       )}

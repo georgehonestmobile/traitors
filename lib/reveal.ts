@@ -25,6 +25,7 @@ export type Step = StepBase &
     | { kind: "reveal"; voterId: string; targetId: string; n: number; total: number; recount?: boolean }
     | { kind: "standings"; upTo: number }
     | { kind: "tie" }
+    | { kind: "draw"; phase: "announce" | "tease" | "reveal" }
     | { kind: "final" }
   );
 
@@ -61,6 +62,8 @@ export type RevealView = {
     recount?: { tied: string[]; tally: { name: string; count: number }[] };
     banished: string[];
     unresolved: boolean;
+    /** Players who drew straws, if the tiebreak was still level. */
+    drawnFrom?: string[];
   };
 };
 
@@ -196,11 +199,45 @@ function tieMessage(round: Round, order: VotePair[], outcome: Outcome): Message 
     "",
     tb.order.length
       ? `That leaves *${votes(tb.order.length)}* to count again…`
-      : "That leaves no votes to count, so the tie can't be broken this way.",
+      : "That leaves no votes to count, so it comes down to drawing straws…",
   );
   return {
     text: `It's a tie between ${andList(tb.tiedIds.map(name))}. Recounting without the tied players' votes.`,
     blocks: [header(round, "It's a tie!", "⚖️"), section(lines.join("\n")), { type: "divider" }, section(`*The count*\n\n${tallyLines(round, order)}`)],
+  };
+}
+
+function drawMessage(round: Round, outcome: Outcome, phase: "announce" | "tease" | "reveal"): Message {
+  const name = playerName(round);
+  const from = outcome.drawnFrom ?? [];
+  const who = andList(from.map((id) => `*${esc(name(id))}*`));
+  const short = outcome.banished[0];
+  if (phase === "announce") {
+    const why = outcome.tiebreak?.order.length
+      ? `Even after the recount, ${who} are level on *${votes(outcome.count)}* each.`
+      : `There are no votes left to separate ${who}.`;
+    return {
+      text: `Still level. ${andList(from.map(name))} will draw straws.`,
+      blocks: [
+        header(round, "Still level", "🎲"),
+        section(`${why}
+
+It comes down to chance. Each of them draws a straw, and whoever draws the *short straw* is banished.`),
+      ],
+    };
+  }
+  if (phase === "tease") {
+    return {
+      text: "The straws are drawn…",
+      blocks: [section(`🥢 ${who} each draw a straw…`), context("Drawing straws")],
+    };
+  }
+  return {
+    text: `${name(short)} draws the short straw.`,
+    blocks: [
+      section(`🥢 *${esc(name(short).toUpperCase())}* draws the short straw.`, playerById(round, short)),
+      context("Drawing straws"),
+    ],
   };
 }
 
@@ -213,7 +250,9 @@ function finalMessage(round: Round, order: VotePair[], outcome: Outcome): Messag
   const tb = outcome.tiebreak;
   const winner = outcome.banished[0];
   let verdict: string;
-  if (!outcome.unresolved) {
+  if (outcome.drawnFrom) {
+    verdict = `*${esc(name(winner))}* drew the short straw.\n*${esc(name(winner).toUpperCase())}*, you have been banished from the Round Table.`;
+  } else if (!outcome.unresolved) {
     verdict = `${tb ? "After the tiebreak, with" : "With"} *${votes(outcome.count)}*, *${esc(name(winner).toUpperCase())}*, you have been banished from the Round Table.`;
   } else if (tb && !tb.order.length) {
     verdict = `It's still a tie between ${andList(outcome.banished.map((id) => `*${esc(name(id))}*`))}.\nThe host will decide what happens next.`;
@@ -264,6 +303,11 @@ export function buildPlan(order: VotePair[], outcome: Outcome, standingsEvery: n
       steps.push({ kind: "reveal", ...common, targetId: v.targetId, delayAfter: last ? pace.AFTER_LAST_VOTE : pace.RECOUNT_GAP });
     });
   }
+  if (outcome.drawnFrom) {
+    steps.push({ kind: "draw", phase: "announce", delayAfter: pace.DRAW_ANNOUNCE_PAUSE });
+    steps.push({ kind: "draw", phase: "tease", delayAfter: pace.DRAW_TEASE_PAUSE });
+    steps.push({ kind: "draw", phase: "reveal", delayAfter: pace.AFTER_LAST_VOTE });
+  }
   steps.push({ kind: "final", delayAfter: 0 });
   return steps;
 }
@@ -308,6 +352,7 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
       tally: named(state.order),
       banished: outcome.banished.map(name),
       unresolved: outcome.unresolved,
+      ...(outcome.drawnFrom ? { drawnFrom: outcome.drawnFrom.map(name) } : {}),
       ...(outcome.tiebreak
         ? { recount: { tied: outcome.tiebreak.tiedIds.map(name), tally: named(outcome.tiebreak.order) } }
         : {}),
@@ -385,6 +430,14 @@ async function perform(step: Step, state: RevealState, round: Round): Promise<Re
     case "tie":
       await slack.postMessage(ch, tieMessage(round, state.order, outcomeOf(state)));
       return {};
+    case "draw": {
+      const message = drawMessage(round, outcomeOf(state), step.phase);
+      if (step.phase === "tease") return { "draw:straws": await slack.postMessage(ch, message) };
+      const ts = step.phase === "reveal" ? state.tsByVoter["draw:straws"] : undefined;
+      if (ts) await slack.updateMessage(ch, ts, message);
+      else await slack.postMessage(ch, message);
+      return {};
+    }
     case "final":
       await slack.postMessage(ch, finalMessage(round, state.order, outcomeOf(state)));
       return {};

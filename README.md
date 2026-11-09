@@ -28,7 +28,7 @@ The bot posts in the chosen channel:
 
 **Pacing** (`lib/pacing.ts`) starts quick, about 3 seconds between early votes, and slows as the count builds, with 10 seconds before each of the final three votes.
 
-**Ties** (`lib/outcome.ts`): if the count ends level, the bot posts "It's a tie!", explains the tiebreak and lists the votes being removed. Tied players can't vote in the tiebreak, so their votes are removed, votes for anyone outside the tie are set aside, and the remaining votes are replayed between the tied players at a quicker pace (3 seconds apart). If it's still level, or there are no votes left to count, the verdict says the host decides.
+**Ties** (`lib/outcome.ts`): if the count ends level, the bot posts "It's a tie!", explains the tiebreak and lists the votes being removed. Tied players can't vote in the tiebreak, so their votes are removed, votes for anyone outside the tie are set aside, and the remaining votes are replayed between the tied players at a quicker pace (3 seconds apart). If it's still level, or there are no votes left to count, the players still tied **draw straws**: the bot announces it, posts "🥢 …each draw a straw…", and a few seconds later reveals who drew the short straw. That player is picked at random (`crypto.randomInt`) and banished.
 
 **Suspense ordering** (`lib/suspense.ts`): the app tries many orderings and keeps the one where the result becomes mathematically certain as late as possible, the gap between first and second stays small, the eventual loser doesn't lead alone early, and the lead changes hands when it can. A 6–4 split comes out like `B A A B B A B A A A`.
 

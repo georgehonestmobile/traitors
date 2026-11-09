@@ -14,6 +14,8 @@ export const AFTER_LAST_VOTE = 6;
 export const STANDINGS_PAUSE = 3;
 export const TIE_PAUSE = 14;
 export const RECOUNT_GAP = 3;
+export const DRAW_ANNOUNCE_PAUSE = 8;
+export const DRAW_TEASE_PAUSE = 6;
 
 /** Pause after vote n is revealed, before vote n + 1 begins. */
 export function gapAfter(n: number, total: number): number {
