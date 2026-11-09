@@ -22,7 +22,17 @@ const DURATIONS = [
 const fmt = (d: Date) =>
   d.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
-export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[]; lastRoundPlayerIds: string[] }) {
+export function NewRoundForm({
+  players,
+  lastRoundPlayerIds,
+  banishedIds,
+}: {
+  players: Player[];
+  lastRoundPlayerIds: string[];
+  banishedIds: string[];
+}) {
+  const banished = new Set(banishedIds);
+  const canPlay = (id: string) => !banished.has(id);
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [query, setQuery] = useState("");
@@ -112,11 +122,11 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
         </div>
         <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search Slack members…" aria-label="Search players" />
         <div className="chips" style={{ marginTop: 10 }}>
-          <button type="button" className="chip" onClick={() => setSelected(new Set(visible.map((p) => p.id)))}>
+          <button type="button" className="chip" onClick={() => setSelected(new Set(visible.map((p) => p.id).filter(canPlay)))}>
             Select {query ? "shown" : "all"}
           </button>
           {lastRoundPlayerIds.length > 0 && (
-            <button type="button" className="chip" onClick={() => setSelected(new Set(lastRoundPlayerIds.filter((id) => players.some((p) => p.id === id))))}>
+            <button type="button" className="chip" onClick={() => setSelected(new Set(lastRoundPlayerIds.filter((id) => canPlay(id) && players.some((p) => p.id === id))))}>
               Same as last round
             </button>
           )}
@@ -126,6 +136,22 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
         </div>
         <div className="players" role="group" aria-label="Players">
           {visible.map((p) => {
+            if (banished.has(p.id)) {
+              return (
+                <button
+                  type="button"
+                  key={p.id}
+                  className="player banished"
+                  disabled
+                  aria-label={`${p.name}, banished`}
+                  title={`${p.name} has been banished from this game`}
+                >
+                  <Avatar player={p} />
+                  <span className="name">{p.name}</span>
+                  <span className="tick" aria-hidden>🗡</span>
+                </button>
+              );
+            }
             const on = selected.has(p.id);
             return (
               <button type="button" key={p.id} className={`player${on ? " on" : ""}`} aria-pressed={on} onClick={() => toggle(p.id)}>

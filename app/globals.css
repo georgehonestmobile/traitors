@@ -243,3 +243,29 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
 .done-note { color: var(--ok); font-size: 13.5px; margin: 0 0 12px; }
 .revealed li.recount { border-style: dashed; }
+
+/* Games, not playing, delete */
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline > select, .inline > input { flex: 1; min-width: 0; }
+.new-game { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 12px; margin-bottom: 16px; }
+.tag {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 4px 4px 10px; border-radius: 999px;
+  border: 1px solid rgba(210, 58, 48, 0.4); background: var(--crimson-soft); color: var(--text);
+}
+.not-playing .tag { border-color: var(--border-strong); background: var(--surface-2); }
+.tag button {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1;
+  width: 20px; height: 20px; border-radius: 50%;
+}
+.tag button:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+details.panel > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary .panel-title::before { content: "▸ "; color: var(--faint); }
+details.panel[open] > summary .panel-title::before { content: "▾ "; }
+.round-card { position: relative; }
+.round-card .round-link { display: block; text-decoration: none; }
+.round-card .foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+.earlier { margin-top: 16px; }
+.earlier > summary { cursor: pointer; color: var(--muted); font-size: 13.5px; margin-bottom: 10px; }
+.player.banished { opacity: 0.4; cursor: not-allowed; }
+.player.banished .name { text-decoration: line-through; }

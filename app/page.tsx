@@ -1,30 +1,72 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
+import { getCurrentGame, getNotPlaying } from "@/lib/game";
 import { roundStatus } from "@/lib/rounds";
 import { listPlayers } from "@/lib/slack";
-import { getStore, type Player } from "@/lib/store";
+import { getStore, type Player, type Round } from "@/lib/store";
+import { DeleteRoundButton } from "@/components/DeleteRoundButton";
+import { GamePanel } from "@/components/GamePanel";
 import { NewRoundForm } from "@/components/NewRoundForm";
+import { NotPlayingPanel } from "@/components/NotPlayingPanel";
 import { StatusPill } from "@/components/StatusPill";
 import { TopBar } from "@/components/TopBar";
 
 export const dynamic = "force-dynamic";
 
+function RoundCard({ round, votes, now }: { round: Round; votes: number; now: number }) {
+  const status = roundStatus(round, now);
+  const pct = Math.round((votes / round.players.length) * 100);
+  return (
+    <div className="round-card">
+      <Link href={`/rounds/${round.id}`} className="round-link">
+        <div className="top">
+          <span className="name">{round.test && <span className="test-tag">Test</span>}{round.title}</span>
+          <StatusPill status={status} />
+        </div>
+        <div className="meta">
+          <span>{votes} of {round.players.length} voted</span>
+          {status === "scheduled" && <span>Opens {relative(round.opensAt, now)}</span>}
+          {status === "open" && <span>Closes {relative(round.closesAt, now)}</span>}
+          {(status === "closed" || status === "cancelled") && <span>{formatDateTime(round.opensAt)}</span>}
+        </div>
+        <div className="progress" style={{ marginTop: 10 }}><span style={{ width: `${pct}%` }} /></div>
+      </Link>
+      <div className="foot">
+        <DeleteRoundButton id={round.id} title={round.title} active={!round.test && (status === "open" || status === "scheduled")} />
+      </div>
+    </div>
+  );
+}
+
 export default async function Home() {
   await requireAdmin();
   const store = getStore();
 
-  let players: Player[] = [];
+  let everyone: Player[] = [];
   let slackError: string | null = null;
   try {
-    players = await listPlayers();
+    everyone = await listPlayers();
   } catch (e) {
     slackError = e instanceof Error ? e.message : String(e);
   }
 
-  const rounds = await store.listRounds(30);
-  const voteCounts = await Promise.all(rounds.map((r) => store.getVotes(r.id).then((v) => v.length)));
+  const [game, notPlayingIds, rounds] = await Promise.all([
+    getCurrentGame(),
+    getNotPlaying(everyone),
+    store.listRounds(100),
+  ]);
+  const notPlaying = new Set(notPlayingIds);
+  const players = everyone.filter((p) => !notPlaying.has(p.id));
+  const banishedIds = new Set(game.banished.map((b) => b.playerId));
+
+  const voteCounts = new Map(
+    await Promise.all(rounds.map(async (r) => [r.id, (await store.getVotes(r.id)).length] as const)),
+  );
+  const thisGame = rounds.filter((r) => r.gameId === game.id);
+  const earlier = rounds.filter((r) => r.gameId !== game.id);
   const now = Date.now();
+  const gameNumber = Number(game.name.match(/^Game (\d+)$/)?.[1]);
 
   return (
     <div className="shell">
@@ -37,35 +79,47 @@ export default async function Home() {
             <p className="panel-sub">Check SLACK_BOT_TOKEN and that the app has the users:read scope.</p>
           </div>
         ) : (
-          <NewRoundForm players={players} lastRoundPlayerIds={rounds[0]?.players.map((p) => p.id) ?? []} />
+          <NewRoundForm
+            players={players}
+            banishedIds={[...banishedIds]}
+            lastRoundPlayerIds={thisGame[0]?.players.map((p) => p.id) ?? []}
+          />
         )}
 
-        <section className="panel">
-          <h2 className="panel-title">Rounds</h2>
-          <p className="panel-sub">Most recent first.</p>
-          <div className="rounds">
-            {!rounds.length && <div className="empty">No rounds yet. Call your first vote.</div>}
-            {rounds.map((r, i) => {
-              const status = roundStatus(r, now);
-              const pct = Math.round((voteCounts[i] / r.players.length) * 100);
-              return (
-                <Link key={r.id} href={`/rounds/${r.id}`} className="round-card">
-                  <div className="top">
-                    <span className="name">{r.test && <span className="test-tag">Test</span>}{r.title}</span>
-                    <StatusPill status={status} />
-                  </div>
-                  <div className="meta">
-                    <span>{voteCounts[i]} of {r.players.length} voted</span>
-                    {status === "scheduled" && <span>Opens {relative(r.opensAt, now)}</span>}
-                    {status === "open" && <span>Closes {relative(r.closesAt, now)}</span>}
-                    {(status === "closed" || status === "cancelled") && <span>{formatDateTime(r.opensAt)}</span>}
-                  </div>
-                  <div className="progress" style={{ marginTop: 10 }}><span style={{ width: `${pct}%` }} /></div>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
+        <div className="side">
+          <GamePanel
+            name={game.name}
+            startedAt={formatDateTime(game.createdAt)}
+            banished={game.banished}
+            candidates={players.filter((p) => !banishedIds.has(p.id))}
+            nextName={gameNumber ? `Game ${gameNumber + 1}` : "New game"}
+          />
+
+          <section className="panel">
+            <h2 className="panel-title">Rounds</h2>
+            <p className="panel-sub">This game, most recent first.</p>
+            <div className="rounds">
+              {!thisGame.length && <div className="empty">No rounds in this game yet. Call your first vote.</div>}
+              {thisGame.map((r) => (
+                <RoundCard key={r.id} round={r} votes={voteCounts.get(r.id) ?? 0} now={now} />
+              ))}
+            </div>
+            {earlier.length > 0 && (
+              <details className="earlier">
+                <summary>Earlier rounds ({earlier.length})</summary>
+                <div className="rounds">
+                  {earlier.map((r) => (
+                    <RoundCard key={r.id} round={r} votes={voteCounts.get(r.id) ?? 0} now={now} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </section>
+
+          {!slackError && (
+            <NotPlayingPanel hidden={everyone.filter((p) => notPlaying.has(p.id))} others={players} />
+          )}
+        </div>
       </div>
     </div>
   );

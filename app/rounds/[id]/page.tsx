@@ -7,6 +7,7 @@ import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
 import { getStore } from "@/lib/store";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { DeleteRoundButton } from "@/components/DeleteRoundButton";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
 import { TestVotePanel } from "@/components/TestVotePanel";
@@ -57,7 +58,10 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
             </span>
           </div>
         </div>
-        <RoundActions id={round.id} status={status} />
+        <div className="actions">
+          <RoundActions id={round.id} status={status} />
+          <DeleteRoundButton id={round.id} title={round.title} active={!round.test && (status === "open" || status === "scheduled")} redirectHome />
+        </div>
       </div>
 
       <div className="grid">

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import * as slack from "./slack";
 import * as msg from "./messages";
+import { getCurrentGame, getNotPlaying } from "./game";
 import { getStore, type Delivery, type Player, type Round } from "./store";
 
 export type RoundStatus = "scheduled" | "open" | "closed" | "cancelled";
@@ -61,12 +62,20 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
   if (closes - now > MAX_SCHEDULE_MS) throw new RoundError("Slack can only schedule up to 120 days ahead.");
 
   // Resolve names from Slack rather than trusting the browser.
-  const directory = new Map((await slack.listPlayers()).map((p) => [p.id, p]));
+  const everyone = await slack.listPlayers();
+  const directory = new Map(everyone.map((p) => [p.id, p]));
   const players: Player[] = ids.map((id) => {
     const p = directory.get(id);
     if (!p) throw new RoundError(`Unknown Slack user: ${id}`);
     return p;
   });
+  const game = await getCurrentGame();
+  const notPlaying = new Set(await getNotPlaying(everyone));
+  const banished = new Set(game.banished.map((b) => b.playerId));
+  const barred = players.filter((p) => notPlaying.has(p.id) || banished.has(p.id));
+  if (barred.length) {
+    throw new RoundError(`${barred.map((p) => p.name).join(", ")} can't play: banished or marked as not playing.`);
+  }
 
   const round: Round = {
     id: crypto.randomUUID().slice(0, 8),
@@ -76,6 +85,7 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     createdAt: new Date(now).toISOString(),
     players,
     delivery: {},
+    gameId: game.id,
     ...(input.test ? { test: true } : {}),
   };
   const store = getStore();

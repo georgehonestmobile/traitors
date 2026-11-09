@@ -27,6 +27,8 @@ export type Round = {
   cancelledAt?: string;
   /** Test round: no Slack DMs; the host casts votes from the admin panel. */
   test?: boolean;
+  /** The game this round belongs to (missing on rounds from before games existed). */
+  gameId?: string;
 };
 
 export type Vote = { voterId: string; targetId: string; at: string };
@@ -39,6 +41,8 @@ export interface Store {
   /** Records a vote only if this voter hasn't voted in this round. Returns false if they already had. */
   castVote(roundId: string, vote: Vote): Promise<boolean>;
   getVotes(roundId: string): Promise<Vote[]>;
+  /** Removes the round, its votes and the given extra keys. */
+  deleteRound(id: string, extraKeys?: string[]): Promise<void>;
   getJSON<T>(key: string): Promise<T | null>;
   setJSON(key: string, value: unknown): Promise<void>;
   /** Atomic "claim": true for the first caller only, until ttl expires. */
@@ -77,6 +81,11 @@ class RedisStore implements Store {
   async getVotes(roundId: string) {
     const all = await this.redis.hgetall<Record<string, Vote>>(votesKey(roundId));
     return Object.values(all ?? {});
+  }
+
+  async deleteRound(id: string, extraKeys: string[] = []) {
+    await this.redis.del(roundKey(id), votesKey(id), ...extraKeys);
+    await this.redis.zrem(ROUNDS_INDEX, id);
   }
 
   async getJSON<T>(key: string) {
@@ -118,6 +127,11 @@ class MemoryStore implements Store {
   }
   async getVotes(roundId: string) {
     return [...(this.votes.get(roundId)?.values() ?? [])];
+  }
+  async deleteRound(id: string, extraKeys: string[] = []) {
+    this.rounds.delete(id);
+    this.votes.delete(id);
+    for (const k of extraKeys) this.kv.delete(k);
   }
   private kv = new Map<string, unknown>();
   private claims = new Map<string, number>();

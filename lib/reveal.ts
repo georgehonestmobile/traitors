@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import { getStore, type Player, type Round } from "./store";
 import { RoundError, roundStatus } from "./rounds";
+import { banish, unbanish } from "./game";
 import { resolveOutcome, type Outcome } from "./outcome";
 import * as pace from "./pacing";
 import { suspensefulOrder, winners, type VotePair } from "./suspense";
@@ -498,6 +499,7 @@ export async function stepReveal(roundId: string, opts: { force?: boolean } = {}
     }
   }
   await store.setJSON(stateKey(roundId), fresh);
+  if (!error && fresh.status === "done") await recordBanished(round, fresh);
   return toView(fresh, round);
 }
 
@@ -523,9 +525,19 @@ export async function resumeReveal(roundId: string) {
   return toView(state, round);
 }
 
+/** Real rounds: the banished player sits out the rest of the game. */
+async function recordBanished(round: Round, state: RevealState) {
+  if (round.test || !round.gameId) return;
+  const player = playerById(round, outcomeOf(state).banished[0] ?? "");
+  if (player) await banish(round.gameId, player, round.id);
+}
+
 /** Forget the reveal so it can be run again. Messages already posted in Slack stay. */
 export async function resetReveal(roundId: string) {
-  await loadRound(roundId);
+  const round = await loadRound(roundId);
   await getStore().setJSON(stateKey(roundId), null);
+  if (round.gameId && !round.test) await unbanish(round.gameId, { roundId });
   return null;
 }
+
+export const revealKey = stateKey;
