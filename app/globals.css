@@ -242,3 +242,4 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .panel.test { border-color: rgba(120, 170, 220, 0.35); }
 .target-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
 .done-note { color: var(--ok); font-size: 13.5px; margin: 0 0 12px; }
+.revealed li.recount { border-style: dashed; }

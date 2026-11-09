@@ -14,7 +14,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           view: await startReveal(id, {
             channel: String(body.channel ?? ""),
             channelName: String(body.channelName ?? ""),
-            intervalSec: Number(body.intervalSec),
             standingsEvery: Number(body.standingsEvery),
           }),
         });

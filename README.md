@@ -15,7 +15,7 @@ Built with Next.js on Vercel, Upstash Redis for storage, and the Slack Web API.
 4. The DM is replaced with "Your vote is locked in: Adam". Late votes are rejected and the DM says so.
 5. In the GUI you can watch turnout live, close voting early, or cancel a round (scheduled DMs are deleted, sent ones are marked cancelled).
 
-6. After voting closes, run **the reveal** from the round's page: pick a Slack channel, the pace, and how often to post the running count, then press **Begin the reveal**.
+6. After voting closes, run **the reveal** from the round's page: pick a Slack channel and how often to post the running count, then press **Begin the reveal**.
 
 ## The reveal
 
@@ -24,7 +24,11 @@ The bot posts in the chosen channel:
 1. An opener: how many voted, and who didn't.
 2. For each vote: "*Jack* picks up their slate…", then a few seconds later the same message changes to "*Jack* votes for… *ADAM*".
 3. The running count every few votes (configurable).
-4. The verdict: who is banished, or a tie for the host to settle, with the final count.
+4. The verdict: who is banished, with the final count.
+
+**Pacing** (`lib/pacing.ts`) starts quick, about 3 seconds between early votes, and slows as the count builds, with 10 seconds before each of the final three votes.
+
+**Ties** (`lib/outcome.ts`): if the count ends level, the bot posts "It's a tie!", explains the tiebreak and lists the votes being removed. Tied players can't vote in the tiebreak, so their votes are removed, votes for anyone outside the tie are set aside, and the remaining votes are replayed between the tied players at a quicker pace (3 seconds apart). If it's still level, or there are no votes left to count, the verdict says the host decides.
 
 **Suspense ordering** (`lib/suspense.ts`): the app tries many orderings and keeps the one where the result becomes mathematically certain as late as possible, the gap between first and second stays small, the eventual loser doesn't lead alone early, and the lead changes hands when it can. A 6–4 split comes out like `B A A B B A B A A A`.
 

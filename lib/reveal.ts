@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import { getStore, type Player, type Round } from "./store";
 import { RoundError, roundStatus } from "./rounds";
+import { resolveOutcome, type Outcome } from "./outcome";
+import * as pace from "./pacing";
 import { suspensefulOrder, winners, type VotePair } from "./suspense";
 
 /**
@@ -10,24 +12,30 @@ import { suspensefulOrder, winners, type VotePair } from "./suspense";
  * The host's admin page drives it: it calls `stepReveal` whenever the next step is due,
  * so the reveal pauses if that page is closed and picks up again when it is reopened.
  * Each step is claimed atomically, so two open admin tabs can't double-post.
+ *
+ * The whole sequence (vote order, any tiebreak recount, the verdict) is worked out
+ * up front when the reveal starts, then posted step by step.
  */
 
 type StepBase = { delayAfter: number };
 export type Step = StepBase &
   (
     | { kind: "intro" }
-    | { kind: "tease"; voterId: string; n: number; total: number }
-    | { kind: "reveal"; voterId: string; targetId: string; n: number; total: number }
+    | { kind: "tease"; voterId: string; n: number; total: number; recount?: boolean }
+    | { kind: "reveal"; voterId: string; targetId: string; n: number; total: number; recount?: boolean }
     | { kind: "standings"; upTo: number }
+    | { kind: "tie" }
     | { kind: "final" }
   );
 
-export type RevealSettings = { channel: string; channelName: string; intervalSec: number; standingsEvery: number };
+export type RevealSettings = { channel: string; channelName: string; standingsEvery: number };
 
 export type RevealState = RevealSettings & {
   roundId: string;
   runId: string;
   order: VotePair[];
+  /** Missing on reveals started before tiebreaks existed. */
+  outcome?: Outcome;
   plan: Step[];
   next: number;
   nextAt: string;
@@ -47,8 +55,13 @@ export type RevealView = {
   stepsTotal: number;
   msUntilNext: number;
   error?: string;
-  revealed: { n: number; total: number; voter: string; target: string }[];
-  result?: { tally: { name: string; count: number }[]; banished: string[] };
+  revealed: { key: string; n: number; total: number; voter: string; target: string; recount: boolean }[];
+  result?: {
+    tally: { name: string; count: number }[];
+    recount?: { tied: string[]; tally: { name: string; count: number }[] };
+    banished: string[];
+    unresolved: boolean;
+  };
 };
 
 const stateKey = (roundId: string) => `reveal:${roundId}`;
@@ -66,6 +79,10 @@ const section = (text: string, avatar?: Player) => ({
   ...(avatar?.avatar ? { accessory: { type: "image", image_url: avatar.avatar, alt_text: avatar.name } } : {}),
 });
 const context = (text: string) => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
+const header = (round: Round, text: string, emoji: string) => ({
+  type: "header",
+  text: { type: "plain_text", text: `${round.test ? "🧪 TEST · " : `${emoji} `}${text}`, emoji: true },
+});
 
 const TEASES = [
   "picks up their slate…",
@@ -93,15 +110,15 @@ const playerName = (round: Round) => {
   return (id: string) => m.get(id) ?? "Unknown";
 };
 const playerById = (round: Round, id: string) => round.players.find((p) => p.id === id);
+const andList = (items: string[]) =>
+  items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+const votes = (n: number) => `${n} ${n === 1 ? "vote" : "votes"}`;
 
 function introMessage(round: Round, order: VotePair[]): Message {
   const voted = new Set(order.map((v) => v.voterId));
   const absent = round.players.filter((p) => !voted.has(p.id));
   const blocks: unknown[] = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: round.test ? "🧪 TEST · The Round Table" : "🕯️ The Round Table", emoji: true },
-    },
+    header(round, "The Round Table", "🕯️"),
     section(
       `*${esc(round.title)}*\n\nThe votes are in: *${order.length}* of *${round.players.length}* players voted.\n` +
         "One by one, each player will now reveal who they believe is a *Traitor*.",
@@ -112,11 +129,18 @@ function introMessage(round: Round, order: VotePair[]): Message {
   return { text: `${round.test ? "[TEST] " : ""}The Round Table: ${round.title}. The votes are in.`, blocks };
 }
 
+const voteContext = (step: { n: number; total: number; recount?: boolean }) =>
+  context(`${step.recount ? "Recount · vote" : "Vote"} ${step.n} of ${step.total}`);
+
 function teaseMessage(round: Round, step: Extract<Step, { kind: "tease" }>): Message {
   const who = esc(playerName(round)(step.voterId));
   const last = step.n === step.total;
-  const line = last ? `*The final vote.* *${who}* ${TEASES[0]}` : `*${who}* ${TEASES[(step.n - 1) % TEASES.length]}`;
-  return { text: `${who} is about to reveal their vote…`, blocks: [section(`🪶 ${line}`), context(`Vote ${step.n} of ${step.total}`)] };
+  const line = step.recount
+    ? `*The final vote of the recount.* *${who}*'s vote goes to…`
+    : last
+      ? `*The final vote.* *${who}* ${TEASES[0]}`
+      : `*${who}* ${TEASES[(step.n - 1) % TEASES.length]}`;
+  return { text: `${who} is about to reveal their vote…`, blocks: [section(`🪶 ${line}`), voteContext(step)] };
 }
 
 function revealMessage(round: Round, step: Extract<Step, { kind: "reveal" }>): Message {
@@ -124,10 +148,14 @@ function revealMessage(round: Round, step: Extract<Step, { kind: "reveal" }>): M
   const voter = esc(name(step.voterId));
   const target = esc(name(step.targetId).toUpperCase());
   const self = step.voterId === step.targetId;
-  const line = self ? `*${voter}* votes for… *${target}*. Themselves?! 😳` : `*${voter}* votes for… *${target}*`;
+  const line = step.recount
+    ? `🔁 *${voter}*'s vote goes to… *${target}*`
+    : self
+      ? `🗡️ *${voter}* votes for… *${target}*. Themselves?! 😳`
+      : `🗡️ *${voter}* votes for… *${target}*`;
   return {
     text: `${name(step.voterId)} votes for ${name(step.targetId)}`,
-    blocks: [section(`🗡️ ${line}`, playerById(round, step.targetId)), context(`Vote ${step.n} of ${step.total}`)],
+    blocks: [section(line, playerById(round, step.targetId)), voteContext(step)],
   };
 }
 
@@ -140,53 +168,102 @@ function standingsMessage(round: Round, order: VotePair[], upTo: number): Messag
   };
 }
 
-function finalMessage(round: Round, order: VotePair[]): Message {
+function tieMessage(round: Round, order: VotePair[], outcome: Outcome): Message {
+  const tb = outcome.tiebreak!;
   const name = playerName(round);
-  const header = {
-    type: "header",
-    text: { type: "plain_text", text: `${round.test ? "🧪 TEST · " : "⚖️ "}The votes have been counted`, emoji: true },
-  };
-  if (!order.length) {
-    return { text: "No votes were cast.", blocks: [header, section("No votes were cast. Nobody is banished… tonight.")] };
+  const tied = tb.tiedIds.map((id) => `*${esc(name(id))}*`);
+  const lines: string[] = [
+    `${andList(tied)} are level on *${votes(tb.tiedCount)}* each.`,
+    "",
+    "*Tiebreak:* tied players can't vote in the tiebreak, so their votes are removed and the count is replayed " +
+      `between ${andList(tied)} only.`,
+  ];
+  if (tb.removed.length) {
+    lines.push("", "*Votes removed*");
+    for (const v of tb.removed) lines.push(`• *${esc(name(v.voterId))}*'s vote for ${esc(name(v.targetId))}`);
   }
-  const w = winners(order);
-  const plural = w.count === 1 ? "vote" : "votes";
-  const verdict =
-    w.ids.length === 1
-      ? `With *${w.count}* ${plural}, *${esc(name(w.ids[0]).toUpperCase())}*, you have been banished from the Round Table.`
-      : `It's a tie! ${w.ids.map((id) => `*${esc(name(id))}*`).join(" and ")} have *${w.count}* ${plural} each.\nThe host will decide what happens next.`;
+  const tiedNoVote = tb.tiedIds.filter((id) => !tb.removed.some((v) => v.voterId === id));
+  if (tiedNoVote.length) lines.push(`_${andList(tiedNoVote.map((id) => esc(name(id))))} didn't vote._`);
+  if (tb.setAside.length) {
+    lines.push(
+      "",
+      `*Set aside:* ${votes(tb.setAside.length)} for players outside the tie (${andList(
+        [...new Set(tb.setAside.map((v) => esc(name(v.targetId))))],
+      )}).`,
+    );
+  }
+  lines.push(
+    "",
+    tb.order.length
+      ? `That leaves *${votes(tb.order.length)}* to count again…`
+      : "That leaves no votes to count, so the tie can't be broken this way.",
+  );
   return {
-    text: w.ids.length === 1 ? `${name(w.ids[0])} has been banished.` : "It's a tie.",
-    blocks: [
-      header,
-      section(verdict, w.ids.length === 1 ? playerById(round, w.ids[0]) : undefined),
-      { type: "divider" },
-      section(`*Final count*\n\n${tallyLines(round, order)}`),
-    ],
+    text: `It's a tie between ${andList(tb.tiedIds.map(name))}. Recounting without the tied players' votes.`,
+    blocks: [header(round, "It's a tie!", "⚖️"), section(lines.join("\n")), { type: "divider" }, section(`*The count*\n\n${tallyLines(round, order)}`)],
+  };
+}
+
+function finalMessage(round: Round, order: VotePair[], outcome: Outcome): Message {
+  const name = playerName(round);
+  const head = header(round, "The votes have been counted", "⚖️");
+  if (!order.length) {
+    return { text: "No votes were cast.", blocks: [head, section("No votes were cast. Nobody is banished… tonight.")] };
+  }
+  const tb = outcome.tiebreak;
+  const winner = outcome.banished[0];
+  let verdict: string;
+  if (!outcome.unresolved) {
+    verdict = `${tb ? "After the tiebreak, with" : "With"} *${votes(outcome.count)}*, *${esc(name(winner).toUpperCase())}*, you have been banished from the Round Table.`;
+  } else if (tb && !tb.order.length) {
+    verdict = `It's still a tie between ${andList(outcome.banished.map((id) => `*${esc(name(id))}*`))}.\nThe host will decide what happens next.`;
+  } else {
+    verdict = `Even after the tiebreak, ${andList(outcome.banished.map((id) => `*${esc(name(id))}*`))} are level on *${votes(outcome.count)}* each.\nThe host will decide what happens next.`;
+  }
+  const blocks: unknown[] = [
+    head,
+    section(verdict, outcome.unresolved ? undefined : playerById(round, winner)),
+    { type: "divider" },
+    section(`*${tb ? "Original count" : "Final count"}*\n\n${tallyLines(round, order)}`),
+  ];
+  if (tb?.order.length) blocks.push(section(`*Tiebreak recount*\n\n${tallyLines(round, tb.order)}`));
+  return {
+    text: outcome.unresolved ? "It's still a tie." : `${name(winner)} has been banished.`,
+    blocks,
   };
 }
 
 /* ---------------- Plan ---------------- */
 
-export function buildPlan(order: VotePair[], intervalSec: number, standingsEvery: number): Step[] {
-  const pause = clamp(Math.round(intervalSec * 0.35), 3, 10);
-  const steps: Step[] = [{ kind: "intro", delayAfter: 8 }];
+export function buildPlan(order: VotePair[], outcome: Outcome, standingsEvery: number): Step[] {
+  const steps: Step[] = [{ kind: "intro", delayAfter: pace.INTRO_PAUSE }];
+  const total = order.length;
   order.forEach((v, i) => {
     const n = i + 1;
-    const total = order.length;
-    const last = n === total;
-    const standings = !last && standingsEvery > 0 && n % standingsEvery === 0;
-    steps.push({ kind: "tease", voterId: v.voterId, n, total, delayAfter: last ? pause + 4 : pause });
+    const standings = n < total && standingsEvery > 0 && n % standingsEvery === 0;
+    steps.push({ kind: "tease", voterId: v.voterId, n, total, delayAfter: pace.teasePause(n, total) });
     steps.push({
       kind: "reveal",
       voterId: v.voterId,
       targetId: v.targetId,
       n,
       total,
-      delayAfter: last ? 6 : standings ? 4 : intervalSec,
+      delayAfter: standings ? pace.STANDINGS_PAUSE : pace.gapAfter(n, total),
     });
-    if (standings) steps.push({ kind: "standings", upTo: n, delayAfter: intervalSec });
+    if (standings) steps.push({ kind: "standings", upTo: n, delayAfter: pace.gapAfter(n, total) });
   });
+
+  const recount = outcome.tiebreak?.order;
+  if (outcome.tiebreak) {
+    steps.push({ kind: "tie", delayAfter: recount?.length ? pace.TIE_PAUSE : pace.AFTER_LAST_VOTE });
+    recount?.forEach((v, i) => {
+      const n = i + 1;
+      const last = n === recount.length;
+      const common = { voterId: v.voterId, n, total: recount.length, recount: true };
+      if (last && recount.length > 1) steps.push({ kind: "tease", ...common, delayAfter: 4 });
+      steps.push({ kind: "reveal", ...common, targetId: v.targetId, delayAfter: last ? pace.AFTER_LAST_VOTE : pace.RECOUNT_GAP });
+    });
+  }
   steps.push({ kind: "final", delayAfter: 0 });
   return steps;
 }
@@ -201,10 +278,17 @@ export async function getRevealDefaults(): Promise<Partial<RevealSettings>> {
   return (await getStore().getJSON<RevealSettings>(DEFAULTS_KEY)) ?? {};
 }
 
+function outcomeOf(state: RevealState): Outcome {
+  if (state.outcome) return state.outcome;
+  const w = winners(state.order);
+  return { banished: w.ids, count: w.count, unresolved: w.ids.length > 1 };
+}
+
 export function toView(state: RevealState | null, round: Round): RevealView | null {
   if (!state) return null;
   const name = playerName(round);
   const done = state.plan.slice(0, state.next);
+  const named = (o: VotePair[]) => tally(o).map(([id, count]) => ({ name: name(id), count }));
   const view: RevealView = {
     status: state.status,
     channelName: state.channelName,
@@ -213,13 +297,20 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
     msUntilNext: state.status === "running" ? Math.max(0, Date.parse(state.nextAt) - Date.now()) : 0,
     error: state.error,
     revealed: done.flatMap((s) =>
-      s.kind === "reveal" ? [{ n: s.n, total: s.total, voter: name(s.voterId), target: name(s.targetId) }] : [],
+      s.kind === "reveal"
+        ? [{ key: `${s.recount ? "r" : "v"}${s.n}`, n: s.n, total: s.total, voter: name(s.voterId), target: name(s.targetId), recount: !!s.recount }]
+        : [],
     ),
   };
   if (state.status === "done") {
+    const outcome = outcomeOf(state);
     view.result = {
-      tally: tally(state.order).map(([id, count]) => ({ name: name(id), count })),
-      banished: winners(state.order).ids.map(name),
+      tally: named(state.order),
+      banished: outcome.banished.map(name),
+      unresolved: outcome.unresolved,
+      ...(outcome.tiebreak
+        ? { recount: { tied: outcome.tiebreak.tiedIds.map(name), tally: named(outcome.tiebreak.order) } }
+        : {}),
     };
   }
   return view;
@@ -239,13 +330,13 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   if (existing) throw new RoundError("This reveal has already been started. Reset it to start again.");
   if (!settings.channel) throw new RoundError("Choose a channel to reveal in.");
 
-  const intervalSec = clamp(Math.round(settings.intervalSec || 20), 5, 300);
   const standingsEvery = clamp(Math.round(settings.standingsEvery ?? 3), 0, 50);
   const eligible = new Set(round.players.map((p) => p.id));
-  const votes = (await store.getVotes(roundId))
+  const cast = (await store.getVotes(roundId))
     .filter((v) => eligible.has(v.voterId) && eligible.has(v.targetId))
     .map((v) => ({ voterId: v.voterId, targetId: v.targetId }));
-  const order = suspensefulOrder(votes);
+  const order = suspensefulOrder(cast);
+  const outcome = resolveOutcome(order);
 
   const now = Date.now();
   const state: RevealState = {
@@ -253,10 +344,10 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     runId: crypto.randomUUID().slice(0, 8),
     channel: settings.channel,
     channelName: settings.channelName,
-    intervalSec,
     standingsEvery,
     order,
-    plan: buildPlan(order, intervalSec, standingsEvery),
+    outcome,
+    plan: buildPlan(order, outcome, standingsEvery),
     next: 0,
     nextAt: new Date(now).toISOString(),
     status: "running",
@@ -268,7 +359,6 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   await store.setJSON(DEFAULTS_KEY, {
     channel: state.channel,
     channelName: state.channelName,
-    intervalSec,
     standingsEvery,
   } satisfies RevealSettings);
   return stepReveal(roundId);
@@ -276,14 +366,15 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
 
 async function perform(step: Step, state: RevealState, round: Round): Promise<Record<string, string>> {
   const ch = state.channel;
+  const tsKey = (s: { voterId: string; recount?: boolean }) => `${s.recount ? "recount:" : ""}${s.voterId}`;
   switch (step.kind) {
     case "intro":
       await slack.postMessage(ch, introMessage(round, state.order));
       return {};
     case "tease":
-      return { [step.voterId]: await slack.postMessage(ch, teaseMessage(round, step)) };
+      return { [tsKey(step)]: await slack.postMessage(ch, teaseMessage(round, step)) };
     case "reveal": {
-      const ts = state.tsByVoter[step.voterId];
+      const ts = state.tsByVoter[tsKey(step)];
       if (ts) await slack.updateMessage(ch, ts, revealMessage(round, step));
       else await slack.postMessage(ch, revealMessage(round, step));
       return {};
@@ -291,8 +382,11 @@ async function perform(step: Step, state: RevealState, round: Round): Promise<Re
     case "standings":
       await slack.postMessage(ch, standingsMessage(round, state.order, step.upTo));
       return {};
+    case "tie":
+      await slack.postMessage(ch, tieMessage(round, state.order, outcomeOf(state)));
+      return {};
     case "final":
-      await slack.postMessage(ch, finalMessage(round, state.order));
+      await slack.postMessage(ch, finalMessage(round, state.order, outcomeOf(state)));
       return {};
   }
 }

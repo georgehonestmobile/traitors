@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RevealSettings, RevealView } from "@/lib/reveal";
 import type { RoundStatus } from "@/lib/rounds";
 import type { Channel } from "@/lib/slack";
-
-const PACES = [10, 20, 30, 45, 60];
+import { estimateSeconds, MAX_GAP, MIN_GAP } from "@/lib/pacing";
 const STANDINGS = [
   { label: "Never", value: 0 },
   { label: "Every 2", value: 2 },
@@ -23,10 +22,8 @@ type Props = {
   initialView: RevealView | null;
 };
 
-function estimate(votes: number, interval: number, every: number) {
-  const pause = Math.min(10, Math.max(3, Math.round(interval * 0.35)));
-  const standings = every > 0 ? Math.floor(Math.max(0, votes - 1) / every) : 0;
-  const secs = 8 + votes * (pause + interval) + standings * 4 + 10;
+function estimate(votes: number, every: number) {
+  const secs = estimateSeconds(votes, every);
   return secs < 90 ? `${secs} seconds` : `${Math.round(secs / 60)} minutes`;
 }
 
@@ -35,7 +32,6 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
   const [channel, setChannel] = useState(
     channels.some((c) => c.id === defaults.channel) ? defaults.channel! : (channels[0]?.id ?? ""),
   );
-  const [interval, setIntervalSec] = useState(defaults.intervalSec ?? 20);
   const [every, setEvery] = useState(defaults.standingsEvery ?? 3);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,14 +132,11 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
         )}
 
         <div className="field">
-          <div className="label"><span>Time between votes</span></div>
-          <div className="chips">
-            {PACES.map((s) => (
-              <button type="button" key={s} className={`chip${interval === s ? " on" : ""}`} onClick={() => setIntervalSec(s)}>
-                {s}s
-              </button>
-            ))}
-          </div>
+          <div className="label"><span>Pace</span></div>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Starts quickly, about {MIN_GAP}s between the early votes, then slows down as the count builds, up to{" "}
+            {MAX_GAP}s before each of the final three. If it ends in a tie, the tiebreak recount runs at a quicker pace.
+          </p>
         </div>
 
         <div className="field">
@@ -165,7 +158,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
             <>
               <b>{votesCast}</b> {votesCast === 1 ? "vote" : "votes"} will be revealed in{" "}
               <b>{chosen ? `${chosen.isPrivate ? "🔒 " : "#"}${chosen.name}` : "…"}</b>, taking about{" "}
-              <b>{estimate(votesCast, interval, every)}</b>. Keep this page open while it runs: closing it pauses the
+              <b>{estimate(votesCast, every)}</b>. Keep this page open while it runs: closing it pauses the
               reveal.
             </>
           )}
@@ -177,7 +170,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
           className="btn primary block"
           disabled={!canStart}
           onClick={() =>
-            run("start", { channel, channelName: chosen?.name ?? "", intervalSec: interval, standingsEvery: every })
+            run("start", { channel, channelName: chosen?.name ?? "", standingsEvery: every })
           }
         >
           {busy ? "Starting…" : "Begin the reveal"}
@@ -231,20 +224,37 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
 
       {view.result && (
         <div className="result">
-          <div className="label"><span>Final count</span></div>
+          <div className="label"><span>{view.result.recount ? "Original count" : "Final count"}</span></div>
           {view.result.tally.map((t) => (
-            <div key={t.name} className={`bar-row${view.result!.banished.includes(t.name) ? " top" : ""}`}>
+            <div key={t.name} className={`bar-row${!view.result!.recount && view.result!.banished.includes(t.name) ? " top" : ""}`}>
               <span className="bar-name">{t.name}</span>
               <span className="bar"><span style={{ width: `${(t.count / max) * 100}%` }} /></span>
               <span className="bar-n">{t.count}</span>
             </div>
           ))}
+          {view.result.recount && (
+            <>
+              <div className="label" style={{ marginTop: 16 }}>
+                <span>Tiebreak recount: {view.result.recount.tied.join(" v ")}</span>
+              </div>
+              {view.result.recount.tally.length === 0 && <p className="hint">No votes left to recount.</p>}
+              {view.result.recount.tally.map((t) => (
+                <div key={t.name} className={`bar-row${!view.result!.unresolved && view.result!.banished.includes(t.name) ? " top" : ""}`}>
+                  <span className="bar-name">{t.name}</span>
+                  <span className="bar">
+                    <span style={{ width: `${(t.count / Math.max(1, ...view.result!.recount!.tally.map((x) => x.count))) * 100}%` }} />
+                  </span>
+                  <span className="bar-n">{t.count}</span>
+                </div>
+              ))}
+            </>
+          )}
           <p className="verdict">
             {view.result.banished.length === 0
               ? "No votes were cast."
-              : view.result.banished.length === 1
-                ? `${view.result.banished[0]} is banished.`
-                : `Tie between ${view.result.banished.join(" and ")}.`}
+              : !view.result.unresolved
+                ? `${view.result.banished[0]} is banished${view.result.recount ? " after the tiebreak" : ""}.`
+                : `Still tied: ${view.result.banished.join(" and ")}. Your call.`}
           </p>
         </div>
       )}
@@ -254,9 +264,9 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
           <div className="label"><span>Revealed so far</span></div>
           <ol className="revealed">
             {[...view.revealed].reverse().map((r) => (
-              <li key={r.n}>
-                <span className="muted">{r.n}.</span> <b>{r.voter}</b> <span className="muted">voted for</span>{" "}
-                <b>{r.target}</b>
+              <li key={r.key} className={r.recount ? "recount" : undefined}>
+                <span className="muted">{r.recount ? `Recount ${r.n}.` : `${r.n}.`}</span> <b>{r.voter}</b>{" "}
+                <span className="muted">voted for</span> <b>{r.target}</b>
               </li>
             ))}
           </ol>
