@@ -11,6 +11,7 @@ export async function POST(req: Request) {
       playerIds: Array.isArray(body.playerIds) ? body.playerIds.map(String) : [],
       opensAt: body.opensAt || undefined,
       closesAt: String(body.closesAt ?? ""),
+      test: body.test === true,
     });
     return NextResponse.json({ id: round.id });
   } catch (e) {

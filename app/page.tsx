@@ -51,7 +51,7 @@ export default async function Home() {
               return (
                 <Link key={r.id} href={`/rounds/${r.id}`} className="round-card">
                   <div className="top">
-                    <span className="name">{r.title}</span>
+                    <span className="name">{r.test && <span className="test-tag">Test</span>}{r.title}</span>
                     <StatusPill status={status} />
                   </div>
                   <div className="meta">

@@ -42,6 +42,7 @@ export type CreateRoundInput = {
   /** ISO string; omitted or in the past means "open now" */
   opensAt?: string;
   closesAt: string;
+  test?: boolean;
 };
 
 export async function createRound(input: CreateRoundInput): Promise<Round> {
@@ -75,9 +76,11 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     createdAt: new Date(now).toISOString(),
     players,
     delivery: {},
+    ...(input.test ? { test: true } : {}),
   };
   const store = getStore();
   await store.saveRound(round);
+  if (round.test) return round; // nobody is messaged
 
   const sendNow = opens - now < SEND_NOW_WINDOW_MS;
   await eachLimited(players, 3, async (p) => {
@@ -170,32 +173,40 @@ export async function cancelRound(id: string): Promise<Round> {
   return round;
 }
 
-/** Called when a player picks someone in their DM. Returns the message to replace their DM with. */
+export type VoteOutcome = "recorded" | "already" | "closed" | "not_open" | "cancelled" | "ineligible";
+
+/**
+ * Record a vote. Used when a player picks someone in their DM, and by the host in test rounds.
+ * Returns the outcome plus the message to replace the player's DM with.
+ */
 export async function castVote(args: { roundId: string; voterId: string; targetId: string }) {
+  const result = (outcome: VoteOutcome, message: ReturnType<typeof msg.votedMessage>) => ({ outcome, message });
   const store = getStore();
   const round = await store.getRound(args.roundId);
-  if (!round) return msg.notEligibleMessage();
+  if (!round) return result("ineligible", msg.notEligibleMessage());
 
   const voter = round.players.find((p) => p.id === args.voterId);
-  if (!voter) return msg.notEligibleMessage();
+  if (!voter) return result("ineligible", msg.notEligibleMessage());
 
   const status = roundStatus(round);
-  if (status === "cancelled") return msg.cancelledMessage(round);
-  if (status === "scheduled") return msg.notOpenMessage(round);
+  if (status === "cancelled") return result("cancelled", msg.cancelledMessage(round));
+  if (status === "scheduled") return result("not_open", msg.notOpenMessage(round));
 
   const existing = (await store.getVotes(round.id)).find((v) => v.voterId === voter.id);
-  if (status === "closed") return msg.closedMessage(round, { voted: !!existing });
+  if (status === "closed") return result("closed", msg.closedMessage(round, { voted: !!existing }));
 
   const target = round.players.find((p) => p.id === args.targetId);
-  if (!target) return msg.notEligibleMessage();
+  if (!target) return result("ineligible", msg.notEligibleMessage());
 
-  if (existing) return msg.alreadyVotedMessage(round, round.players.find((p) => p.id === existing.targetId));
+  if (existing) {
+    return result("already", msg.alreadyVotedMessage(round, round.players.find((p) => p.id === existing.targetId)));
+  }
 
   const recorded = await store.castVote(round.id, {
     voterId: voter.id,
     targetId: target.id,
     at: new Date().toISOString(),
   });
-  if (!recorded) return msg.alreadyVotedMessage(round);
-  return msg.votedMessage(round, target);
+  if (!recorded) return result("already", msg.alreadyVotedMessage(round));
+  return result("recorded", msg.votedMessage(round, target));
 }

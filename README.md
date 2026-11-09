@@ -30,6 +30,10 @@ The bot posts in the chosen channel:
 
 **Pacing is driven by the admin page**, so no scheduler is needed: keep the round's page open while the reveal runs. Closing it pauses the reveal; reopening the page carries on where it left off. Pause, Resume and "Post next now" are on the page. Each step is claimed atomically in Redis, so two open tabs can't double-post. Reset lets you run it again (posts already in Slack stay).
 
+## Test rounds
+
+Choose **🧪 Test round** when creating a round to rehearse without bothering anyone. Nobody is DM'd. On the round's page a **Vote as a player** panel lets you pick who's voting and click who they vote for, or **fill in the rest randomly**. Close voting, then run the reveal as normal; reveal posts are labelled TEST. Voting on someone's behalf is only allowed in test rounds.
+
 ## Setup
 
 ### 1. Deploy to Vercel

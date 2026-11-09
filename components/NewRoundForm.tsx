@@ -28,6 +28,7 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openNow, setOpenNow] = useState(true);
+  const [test, setTest] = useState(false);
   // Times depend on the browser's clock and timezone, so fill them in after mount.
   const [opensAt, setOpensAt] = useState("");
   const [closesAt, setClosesAt] = useState("");
@@ -71,6 +72,7 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
           playerIds: [...selected],
           opensAt: openNow ? undefined : new Date(opensAt).toISOString(),
           closesAt: closeDate.toISOString(),
+          test,
         }),
       });
       const data = await res.json();
@@ -90,6 +92,17 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
       <div className="field">
         <label className="label" htmlFor="title">Round name</label>
         <input id="title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Night 3: Banishment" maxLength={100} />
+      </div>
+
+      <div className="field">
+        <div className="label"><span>Mode</span></div>
+        <div className="chips">
+          <button type="button" className={`chip${!test ? " on" : ""}`} onClick={() => setTest(false)}>Real round</button>
+          <button type="button" className={`chip${test ? " on" : ""}`} onClick={() => setTest(true)}>🧪 Test round</button>
+        </div>
+        {test && (
+          <p className="hint">Nobody is DM&apos;d. You cast votes on players&apos; behalf from the round page, then run the reveal as normal.</p>
+        )}
       </div>
 
       <div className="field">
@@ -160,14 +173,16 @@ export function NewRoundForm({ players, lastRoundPlayerIds }: { players: Player[
           "The deadline needs to be after voting opens."
         ) : (
           <>
-            <b>{selectedNames.length <= 4 ? selectedNames.join(", ") : `${selected.size} players`}</b> will be DM&apos;d{" "}
+            {test ? <>🧪 Test round with </> : null}
+            <b>{selectedNames.length <= 4 ? selectedNames.join(", ") : `${selected.size} players`}</b>
+            {test ? <>. Nobody is DM&apos;d; voting opens </> : <> will be DM&apos;d </>}
             {openNow ? <b>now</b> : <>at <b>{fmt(openDate)}</b></>}. Voting closes <b>{fmt(closeDate)}</b>.
           </>
         )}
       </div>
 
       <button className="btn primary block" type="submit" disabled={!valid || busy}>
-        {busy ? "Sending…" : openNow ? "Send the ballots" : "Schedule the ballots"}
+        {busy ? "Creating…" : test ? "Create test round" : openNow ? "Send the ballots" : "Schedule the ballots"}
       </button>
     </form>
   );

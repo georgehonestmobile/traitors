@@ -9,6 +9,7 @@ import { getStore } from "@/lib/store";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
+import { TestVotePanel } from "@/components/TestVotePanel";
 import { RoundActions } from "@/components/RoundActions";
 import { StatusPill } from "@/components/StatusPill";
 import { TopBar } from "@/components/TopBar";
@@ -46,7 +47,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
 
       <div className="detail-head">
         <div>
-          <h1>{round.title}</h1>
+          <h1>{round.test && <span className="test-tag big">Test</span>}{round.title}</h1>
           <div className="facts">
             <span><StatusPill status={status} /></span>
             <span>Opens <b>{formatDateTime(round.opensAt)}</b>{status === "scheduled" && ` (${relative(round.opensAt, now)})`}</span>
@@ -75,7 +76,8 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                   <tr key={p.id}>
                     <td><span className="who"><Avatar player={p} />{p.name}</span></td>
                     <td>
-                      {d?.error ? <span className="errc" title={d.error}>Failed: {d.error.replace(/^Slack /, "")}</span>
+                      {round.test ? <span className="muted">Test, not sent</span>
+                        : d?.error ? <span className="errc" title={d.error}>Failed: {d.error.replace(/^Slack /, "")}</span>
                         : d?.ts ? <span className="muted">Sent</span>
                         : d?.scheduledId ? <span className="muted">{status === "scheduled" ? "Scheduled" : "Sent"}</span>
                         : <span className="muted">—</span>}
@@ -92,6 +94,13 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
         </section>
 
         <div className="side">
+          {round.test && status === "open" && (
+            <TestVotePanel
+              roundId={round.id}
+              players={round.players}
+              votedIds={votes.map((v) => v.voterId)}
+            />
+          )}
           <section className="panel">
             <h2 className="panel-title">Turnout</h2>
             <div className="stat"><span className="big">{votes.length}</span><span className="muted">of {round.players.length} have voted</span></div>

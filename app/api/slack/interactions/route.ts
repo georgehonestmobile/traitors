@@ -25,8 +25,8 @@ export async function POST(req: Request) {
     const targetId = action.selected_option?.value;
     if (!roundId || !targetId) continue;
 
-    const reply = await castVote({ roundId, voterId: payload.user?.id, targetId });
-    if (payload.response_url) await respond(payload.response_url, reply);
+    const { message } = await castVote({ roundId, voterId: payload.user?.id, targetId });
+    if (payload.response_url) await respond(payload.response_url, message);
   }
 
   return new NextResponse(null, { status: 200 });

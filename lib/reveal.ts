@@ -98,14 +98,18 @@ function introMessage(round: Round, order: VotePair[]): Message {
   const voted = new Set(order.map((v) => v.voterId));
   const absent = round.players.filter((p) => !voted.has(p.id));
   const blocks: unknown[] = [
-    { type: "header", text: { type: "plain_text", text: "🕯️ The Round Table", emoji: true } },
+    {
+      type: "header",
+      text: { type: "plain_text", text: round.test ? "🧪 TEST · The Round Table" : "🕯️ The Round Table", emoji: true },
+    },
     section(
       `*${esc(round.title)}*\n\nThe votes are in: *${order.length}* of *${round.players.length}* players voted.\n` +
         "One by one, each player will now reveal who they believe is a *Traitor*.",
     ),
   ];
   if (absent.length) blocks.push(context(`Did not vote: ${absent.map((p) => esc(p.name)).join(", ")}`));
-  return { text: `The Round Table: ${round.title}. The votes are in.`, blocks };
+  if (round.test) blocks.push(context("🧪 This is a test run. The votes were cast by the host, not the players."));
+  return { text: `${round.test ? "[TEST] " : ""}The Round Table: ${round.title}. The votes are in.`, blocks };
 }
 
 function teaseMessage(round: Round, step: Extract<Step, { kind: "tease" }>): Message {
@@ -138,7 +142,10 @@ function standingsMessage(round: Round, order: VotePair[], upTo: number): Messag
 
 function finalMessage(round: Round, order: VotePair[]): Message {
   const name = playerName(round);
-  const header = { type: "header", text: { type: "plain_text", text: "⚖️ The votes have been counted", emoji: true } };
+  const header = {
+    type: "header",
+    text: { type: "plain_text", text: `${round.test ? "🧪 TEST · " : "⚖️ "}The votes have been counted`, emoji: true },
+  };
   if (!order.length) {
     return { text: "No votes were cast.", blocks: [header, section("No votes were cast. Nobody is banished… tonight.")] };
   }

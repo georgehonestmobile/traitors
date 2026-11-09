@@ -25,6 +25,8 @@ export type Round = {
   delivery: Record<string, Delivery>;
   closedEarlyAt?: string;
   cancelledAt?: string;
+  /** Test round: no Slack DMs; the host casts votes from the admin panel. */
+  test?: boolean;
 };
 
 export type Vote = { voterId: string; targetId: string; at: string };
