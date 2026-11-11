@@ -29,8 +29,14 @@ function RoundCard({ round, votes, now }: { round: Round; votes: number; now: nu
         </div>
         <div className="meta">
           <span>{votes} of {round.players.length} voted</span>
-          {status === "scheduled" && <span>Opens {relative(round.opensAt, now)}</span>}
-          {status === "open" && <span>Closes {relative(round.closesAt, now)}</span>}
+          {round.meeting ? (
+            status !== "closed" && status !== "cancelled" && <span>🗣️ Meeting {relative(round.meeting.at, now)}</span>
+          ) : (
+            <>
+              {status === "scheduled" && <span>Opens {relative(round.opensAt, now)}</span>}
+              {status === "open" && <span>Closes {relative(round.closesAt, now)}</span>}
+            </>
+          )}
           {(status === "closed" || status === "cancelled") && <span>{formatDateTime(round.opensAt)}</span>}
         </div>
         <div className="progress" style={{ marginTop: 10 }}><span style={{ width: `${pct}%` }} /></div>

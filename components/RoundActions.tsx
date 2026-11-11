@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RoundStatus } from "@/lib/rounds";
 
-export function RoundActions({ id, status }: { id: string; status: RoundStatus }) {
+export function RoundActions({ id, status, canClose = true }: { id: string; status: RoundStatus; canClose?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function RoundActions({ id, status }: { id: string; status: RoundStatus }
   return (
     <div>
       <div className="actions">
-        {status === "open" && (
+        {status === "open" && canClose && (
           <button className="btn" disabled={!!busy} onClick={() => run("close", "Close voting now? Anyone who hasn't voted will miss out.")}>
             {busy === "close" ? "Closing…" : "Close voting now"}
           </button>

@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import * as msg from "./messages";
 import { activeIds, getCurrentGame, getNotPlaying } from "./game";
-import { getStore, type Delivery, type Player, type Round } from "./store";
+import { getStore, rsvpKey, type Delivery, type Player, type Round, type Rsvp } from "./store";
+import { addDays, appTimeZone, ymdIn, zonedTime } from "./time";
 
 export type RoundStatus = "scheduled" | "open" | "closed" | "cancelled";
 
@@ -44,7 +45,31 @@ export type CreateRoundInput = {
   opensAt?: string;
   closesAt: string;
   test?: boolean;
+  /** "meeting": RSVP the day before, then vote live in the meeting (opensAt/closesAt are ignored). */
+  format?: "remote" | "meeting";
+  /** ISO start of the meeting. */
+  meetingAt?: string;
 };
+
+const HOUR = 60 * 60 * 1000;
+/** Grace for slow clicks after the one-minute meeting vote. */
+export const MEETING_VOTE_MS = 60 * 1000;
+const MEETING_GRACE_MS = 3 * 1000;
+
+/**
+ * RSVPs open at 9am the day before the meeting and close at 5pm (in APP_TIMEZONE).
+ * If that's already passed, they open now and close an hour later (never after the meeting).
+ */
+export function rsvpWindow(meetingAt: number, now = Date.now()) {
+  const tz = appTimeZone();
+  const dayBefore = addDays(ymdIn(new Date(meetingAt), tz), -1);
+  let opens = zonedTime(dayBefore, 9, 0, tz).getTime();
+  let closes = zonedTime(dayBefore, 17, 0, tz).getTime();
+  if (opens < now) opens = now;
+  if (closes <= opens) closes = opens + HOUR;
+  if (closes > meetingAt) closes = meetingAt;
+  return { opens, closes };
+}
 
 export async function createRound(input: CreateRoundInput): Promise<Round> {
   const now = Date.now();
@@ -53,8 +78,18 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
   const ids = [...new Set(input.playerIds ?? [])];
   if (ids.length < 2) throw new RoundError("Select at least two players.");
 
-  let opens = input.opensAt ? Date.parse(input.opensAt) : now;
-  const closes = Date.parse(input.closesAt);
+  const meeting = input.format === "meeting";
+  let meetingAt = NaN;
+  let rsvp = { opens: 0, closes: 0 };
+  if (meeting) {
+    meetingAt = Date.parse(input.meetingAt ?? "");
+    if (Number.isNaN(meetingAt)) throw new RoundError("Choose when the meeting is.");
+    if (meetingAt - now < 60 * 1000) throw new RoundError("The meeting must be in the future.");
+    rsvp = rsvpWindow(meetingAt, now);
+  }
+  let opens = meeting ? rsvp.opens : input.opensAt ? Date.parse(input.opensAt) : now;
+  // Meeting rounds stay open until votes are requested in the meeting (or 12 hours after it starts).
+  const closes = meeting ? meetingAt + 12 * HOUR : Date.parse(input.closesAt);
   if (Number.isNaN(opens) || Number.isNaN(closes)) throw new RoundError("Invalid date.");
   if (opens < now) opens = now;
   if (closes <= now) throw new RoundError("The deadline must be in the future.");
@@ -89,6 +124,16 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     delivery: {},
     gameId: game.id,
     ...(input.test ? { test: true } : {}),
+    ...(meeting
+      ? {
+          format: "meeting" as const,
+          meeting: {
+            at: new Date(meetingAt).toISOString(),
+            rsvpOpensAt: new Date(rsvp.opens).toISOString(),
+            rsvpClosesAt: new Date(rsvp.closes).toISOString(),
+          },
+        }
+      : {}),
   };
   const store = getStore();
   await store.saveRound(round);
@@ -100,10 +145,11 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     round.delivery[p.id] = d;
     try {
       d.channel = await slack.openDm(p.id);
-      const vote = msg.voteMessage(round, p);
-      if (sendNow) d.ts = await slack.postMessage(d.channel, vote);
-      else d.scheduledId = await slack.scheduleMessage(d.channel, new Date(opens), vote);
-      d.closeScheduledId = await slack.scheduleMessage(d.channel, new Date(closes), msg.deadlineMessage(round));
+      // Meeting rounds start with an RSVP; remote rounds with the ballot itself.
+      const first = meeting ? msg.rsvpMessage(round) : msg.voteMessage(round, p);
+      if (sendNow) d.ts = await slack.postMessage(d.channel, first);
+      else d.scheduledId = await slack.scheduleMessage(d.channel, new Date(opens), first);
+      if (!meeting) d.closeScheduledId = await slack.scheduleMessage(d.channel, new Date(closes), msg.deadlineMessage(round));
     } catch (e) {
       d.error = errMsg(e);
     }
@@ -212,6 +258,18 @@ export async function castVote(args: { roundId: string; voterId: string; targetI
 
   if (existing) {
     return result("already", msg.alreadyVotedMessage(round, round.players.find((p) => p.id === existing.targetId)));
+  }
+
+  // Meeting rounds: vote in advance only if you said you can't come; otherwise in the meeting's minute.
+  if (round.format === "meeting" && round.meeting && !round.test) {
+    const m = round.meeting;
+    const now = Date.now();
+    const inMeeting = !!m.requestedAt && now >= Date.parse(m.requestedAt) && now < Date.parse(m.votingClosesAt!) + MEETING_GRACE_MS;
+    if (!inMeeting) {
+      const rsvp = (await store.getFields<Rsvp>(rsvpKey(round.id)))[voter.id];
+      const advance = !m.requestedAt && rsvp?.answer === "no" && now < Date.parse(m.at);
+      if (!advance) return result("not_open", msg.meetingWaitMessage(round));
+    }
   }
 
   const recorded = await store.castVote(round.id, {

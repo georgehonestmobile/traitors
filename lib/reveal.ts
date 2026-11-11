@@ -351,7 +351,9 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
   const inPerson = state.mode === "in-person";
   const view: RevealView = {
     mode: inPerson ? "in-person" : "slack",
-    ...(inPerson ? { script: (state.beats ?? []).map((b) => scriptCard(b, round, state.order, outcomeOf(state))) } : {}),
+    ...(inPerson
+      ? { script: (state.beats ?? []).map((b) => scriptCard(b, round, state.order, outcomeOf(state), state.beats)) }
+      : {}),
     status: state.status,
     channelName: state.channelName,
     stepsDone: state.next,
@@ -396,9 +398,11 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
 
   const standingsEvery = clamp(Math.round(settings.standingsEvery ?? 3), 0, 50);
   const eligible = new Set(round.players.map((p) => p.id));
-  const cast = (await store.getVotes(roundId))
-    .filter((v) => eligible.has(v.voterId) && eligible.has(v.targetId))
-    .map((v) => ({ voterId: v.voterId, targetId: v.targetId }));
+  const recorded = (await store.getVotes(roundId)).filter((v) => eligible.has(v.voterId) && eligible.has(v.targetId));
+  const cast = recorded.map((v) => ({ voterId: v.voterId, targetId: v.targetId }));
+  // Meeting banishments: votes made before the host requested votes were cast in advance.
+  const requested = round.meeting?.requestedAt ? Date.parse(round.meeting.requestedAt) : Infinity;
+  const advance = round.format === "meeting" ? recorded.filter((v) => Date.parse(v.at) < requested).map((v) => v.voterId) : [];
   const order = suspensefulOrder(cast);
   const outcome = resolveOutcome(order);
 
@@ -406,7 +410,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   const state: RevealState = {
     roundId,
     runId: crypto.randomUUID().slice(0, 8),
-    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome) } : {}),
+    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome, advance) } : {}),
     channel: inPerson ? "" : settings.channel,
     channelName: inPerson ? "" : settings.channelName,
     standingsEvery,

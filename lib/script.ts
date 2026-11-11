@@ -10,7 +10,7 @@ import type { VotePair } from "./suspense";
 /** The beats of a face-to-face reveal, in order. */
 export type ScriptBeat =
   | { kind: "intro" }
-  | { kind: "vote"; voterId: string; targetId: string; n: number; total: number }
+  | { kind: "vote"; voterId: string; targetId: string; n: number; total: number; advance?: boolean }
   | { kind: "tie" }
   | { kind: "recount"; voterId: string; targetId: string; n: number; total: number }
   | { kind: "draw-announce" }
@@ -32,9 +32,13 @@ export type ScriptCard = {
   tally?: { name: string; count: number }[];
 };
 
-export function scriptBeats(order: VotePair[], outcome: Outcome): ScriptBeat[] {
+/** `advance`: voters who voted before the meeting (they aren't there; the host reads their vote out). */
+export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = []): ScriptBeat[] {
+  const early = new Set(advance);
   const beats: ScriptBeat[] = [{ kind: "intro" }];
-  order.forEach((v, i) => beats.push({ kind: "vote", ...v, n: i + 1, total: order.length }));
+  order.forEach((v, i) =>
+    beats.push({ kind: "vote", ...v, n: i + 1, total: order.length, ...(early.has(v.voterId) ? { advance: true } : {}) }),
+  );
   const tb = outcome.tiebreak;
   if (tb) {
     beats.push({ kind: "tie" });
@@ -55,7 +59,7 @@ function tally(order: VotePair[], upTo: number, name: (id: string) => string) {
   return [...counts].sort((a, b) => b[1] - a[1]).map(([id, count]) => ({ name: name(id), count }));
 }
 
-export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], outcome: Outcome): ScriptCard {
+export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], outcome: Outcome, beats: ScriptBeat[] = []): ScriptCard {
   const names = new Map(round.players.map((p) => [p.id, p.name]));
   const name = (id: string) => names.get(id) ?? "Unknown";
   const tb = outcome.tiebreak;
@@ -64,12 +68,16 @@ export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], ou
     case "intro": {
       const voted = new Set(order.map((v) => v.voterId));
       const absent = round.players.filter((p) => !voted.has(p.id)).map((p) => p.name);
+      const early = beats.filter((b) => b.kind === "vote" && b.advance).length;
       return {
         kind: beat.kind,
         heading: "Opening",
         say: [
           `The votes are in. ${order.length} of ${round.players.length} players voted.`,
           ...(absent.length ? [`${and(absent)} didn't vote.`] : []),
+          ...(early
+            ? [`${early} ${early === 1 ? "player" : "players"} couldn't be with us and voted in advance. I'll read those votes out.`]
+            : []),
           "When I call your name, reveal who you believe is a Traitor, and tell us why.",
         ],
         note: "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible.",
@@ -78,6 +86,20 @@ export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], ou
     case "vote": {
       const last = beat.n === beat.total;
       const self = beat.voterId === beat.targetId;
+      if (beat.advance) {
+        return {
+          kind: beat.kind,
+          heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""} · cast in advance`,
+          expect: name(beat.targetId),
+          say: [
+            last
+              ? `And the final vote, cast in advance by ${name(beat.voterId)}… ${name(beat.targetId)}.`
+              : `${name(beat.voterId)} couldn't be with us, and voted for… ${name(beat.targetId)}.`,
+          ],
+          note: self ? "Read this one out yourself. They voted for themselves." : "Read this one out yourself.",
+          tally: tally(order, beat.n, name),
+        };
+      }
       return {
         kind: beat.kind,
         heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""}`,

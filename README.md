@@ -17,6 +17,19 @@ Built with Next.js on Vercel, Upstash Redis for storage, and the Slack Web API.
 
 6. After voting closes, run **the reveal** from the round's page: pick a Slack channel and how often to post the running count, then press **Begin the reveal**.
 
+## Banishment formats
+
+When you call a vote, choose a format:
+
+**🗣️ Meeting banishment**
+1. Set when the meeting starts. At **9am the day before**, each player gets a DM asking if they'll be at the meeting, with replies by **5pm** (times in `APP_TIMEZONE`). If you create the meeting later than that, the RSVP goes out straight away with an hour to reply.
+2. **Can't make it:** they get a ballot straight away and vote in advance. Advance voting closes when the meeting starts, or when you request votes.
+3. **Coming (or no reply):** nothing more until the meeting. Players can change their answer until the deadline (unless they've voted).
+4. **In the meeting**, press **⏱️ Request votes (1 minute)** on the round page. Everyone who hasn't voted gets a ballot in Slack with one minute to vote. The page shows a countdown and votes coming in; you can end it early. Ballots not used in time switch to "Time's up" and don't count.
+5. Run the **face-to-face script**: it orders all the votes for suspense, tells you who to call on and what they voted (so you can call out a different answer), and marks advance votes for you to read out.
+
+**💬 Remote (Slack)**: players vote in Slack over a window you set. Afterwards, run the reveal in a Slack channel to announce the results (or face to face).
+
 ## The reveal
 
 The bot posts in the chosen channel:

@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
+import { getRsvps } from "@/lib/meeting";
 import { getReveal, getRevealDefaults, toView } from "@/lib/reveal";
 import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
 import { getStore } from "@/lib/store";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
+import { MeetingPanel } from "@/components/MeetingPanel";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
 import { TestVotePanel } from "@/components/TestVotePanel";
@@ -38,11 +40,19 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const [reveal, revealDefaults] = await Promise.all([getReveal(id), getRevealDefaults()]);
 
   const pct = Math.round((votes.length / round.players.length) * 100);
+
+  // Meeting banishments: RSVPs, advance votes and the in-meeting vote.
+  const m = round.format === "meeting" ? round.meeting : undefined;
+  const rsvps = m ? await getRsvps(id) : {};
+  const requestedAt = m?.requestedAt ? Date.parse(m.requestedAt) : Infinity;
+  const isAdvance = (at: string) => Date.parse(at) < requestedAt;
+  const advanceVotes = votes.filter((v) => isAdvance(v.at)).length;
+  const voting = !!m?.requestedAt && !m.finishedAt;
   const closedAt = round.closedEarlyAt && Date.parse(round.closedEarlyAt) < Date.parse(round.closesAt) ? round.closedEarlyAt : round.closesAt;
 
   return (
     <div className="shell">
-      {(status === "open" || status === "scheduled") && <AutoRefresh />}
+      {(status === "open" || status === "scheduled" || voting) && <AutoRefresh seconds={voting ? 2 : 5} />}
       <TopBar />
       <Link href="/" className="back">← All rounds</Link>
 
@@ -51,15 +61,21 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           <h1>{round.test && <span className="test-tag big">Test</span>}{round.title}</h1>
           <div className="facts">
             <span><StatusPill status={status} /></span>
-            <span>Opens <b>{formatDateTime(round.opensAt)}</b>{status === "scheduled" && ` (${relative(round.opensAt, now)})`}</span>
-            <span>
-              {status === "closed" ? "Closed" : "Closes"} <b>{formatDateTime(status === "closed" ? closedAt : round.closesAt)}</b>
-              {status === "open" && ` (${relative(round.closesAt, now)})`}
-            </span>
+            {m ? (
+              <span>🗣️ Meeting <b>{formatDateTime(m.at)}</b>{Date.parse(m.at) > now && ` (${relative(m.at, now)})`}</span>
+            ) : (
+              <>
+                <span>Opens <b>{formatDateTime(round.opensAt)}</b>{status === "scheduled" && ` (${relative(round.opensAt, now)})`}</span>
+                <span>
+                  {status === "closed" ? "Closed" : "Closes"} <b>{formatDateTime(status === "closed" ? closedAt : round.closesAt)}</b>
+                  {status === "open" && ` (${relative(round.closesAt, now)})`}
+                </span>
+              </>
+            )}
           </div>
         </div>
         <div className="actions">
-          <RoundActions id={round.id} status={status} />
+          <RoundActions id={round.id} status={status} canClose={!m} />
           <DeleteRoundButton id={round.id} title={round.title} active={!round.test && (status === "open" || status === "scheduled")} redirectHome />
         </div>
       </div>
@@ -70,7 +86,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           <p className="panel-sub">Each player can vote once, for any player on this list (including themselves).</p>
           <table className="players-table">
             <thead>
-              <tr><th>Player</th><th>Slack DM</th><th>Vote</th></tr>
+              <tr><th>Player</th>{m ? <th>RSVP</th> : <th>Slack DM</th>}<th>Vote</th></tr>
             </thead>
             <tbody>
               {round.players.map((p) => {
@@ -79,6 +95,15 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                 return (
                   <tr key={p.id}>
                     <td><span className="who"><Avatar player={p} />{p.name}</span></td>
+                    {m ? (
+                      <td>
+                        {round.test ? <span className="muted">Test</span>
+                          : rsvps[p.id]?.answer === "yes" ? <span className="okc">✅ Coming</span>
+                          : rsvps[p.id]?.answer === "no" ? <span className="muted">❌ Can&apos;t come</span>
+                          : d?.error ? <span className="errc" title={d.error}>DM failed</span>
+                          : <span className="faint">{status === "scheduled" ? "Not sent yet" : "No reply"}</span>}
+                      </td>
+                    ) : (
                     <td>
                       {round.test ? <span className="muted">Test, not sent</span>
                         : d?.error ? <span className="errc" title={d.error}>Failed: {d.error.replace(/^Slack /, "")}</span>
@@ -86,8 +111,9 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                         : d?.scheduledId ? <span className="muted">{status === "scheduled" ? "Scheduled" : "Sent"}</span>
                         : <span className="muted">—</span>}
                     </td>
+                    )}
                     <td>
-                      {at ? <span className="okc">✓ Voted <span className="muted">{formatDateTime(at).split(", ").pop()}</span></span>
+                      {at ? <span className="okc">✓ Voted <span className="muted">{m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
                     </td>
                   </tr>
@@ -98,6 +124,30 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
         </section>
 
         <div className="side">
+          {m && (
+            <MeetingPanel
+              roundId={round.id}
+              status={status}
+              meetingLabel={formatDateTime(m.at)}
+              rsvpOpensLabel={formatDateTime(m.rsvpOpensAt)}
+              rsvpClosesLabel={formatDateTime(m.rsvpClosesAt)}
+              rsvpOpen={!m.requestedAt && now >= Date.parse(m.rsvpOpensAt) && now < Date.parse(m.rsvpClosesAt)}
+              rsvpClosed={now >= Date.parse(m.rsvpClosesAt)}
+              counts={{
+                coming: Object.values(rsvps).filter((r) => r.answer === "yes").length,
+                cantCome: Object.values(rsvps).filter((r) => r.answer === "no").length,
+                advanceVotes,
+                noReply: round.players.filter((pl) => !rsvps[pl.id]).length,
+                players: round.players.length,
+              }}
+              requestedAt={m.requestedAt}
+              votingClosesAt={m.votingClosesAt}
+              finished={!!m.finishedAt || (status === "closed" && !voting)}
+              votesIn={votes.length}
+              meetingVotes={votes.length - advanceVotes}
+              test={!!round.test}
+            />
+          )}
           {round.test && status === "open" && (
             <TestVotePanel
               roundId={round.id}
@@ -116,7 +166,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
             votesCast={votes.length}
             channels={channels}
             channelsError={channelsError}
-            defaults={revealDefaults}
+            defaults={m ? { ...revealDefaults, mode: "in-person" } : revealDefaults}
             initialView={toView(reveal, round)}
           />
         </div>

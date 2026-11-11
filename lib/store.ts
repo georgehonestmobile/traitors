@@ -29,7 +29,26 @@ export type Round = {
   test?: boolean;
   /** The game this round belongs to (missing on rounds from before games existed). */
   gameId?: string;
+  /** "remote" (default): vote in Slack over a window. "meeting": RSVP, then vote live in the meeting. */
+  format?: "remote" | "meeting";
+  meeting?: Meeting;
 };
+
+export type Meeting = {
+  /** When the meeting starts. Advance votes close then (or when votes are requested, if sooner). */
+  at: string;
+  rsvpOpensAt: string;
+  rsvpClosesAt: string;
+  /** Set when the host requests votes in the meeting. */
+  requestedAt?: string;
+  votingClosesAt?: string;
+  /** The in-meeting ballot DMs, by player. */
+  ballots?: Record<string, { channel?: string; ts?: string; error?: string }>;
+  finishedAt?: string;
+};
+
+export type Rsvp = { answer: "yes" | "no"; at: string };
+export const rsvpKey = (roundId: string) => `rsvp:${roundId}`;
 
 export type Vote = { voterId: string; targetId: string; at: string };
 
@@ -45,6 +64,9 @@ export interface Store {
   deleteRound(id: string, extraKeys?: string[]): Promise<void>;
   getJSON<T>(key: string): Promise<T | null>;
   setJSON(key: string, value: unknown): Promise<void>;
+  /** Small hashes (e.g. RSVPs): one field per player. */
+  setField(key: string, field: string, value: unknown): Promise<void>;
+  getFields<T>(key: string): Promise<Record<string, T>>;
   /** Atomic "claim": true for the first caller only, until ttl expires. */
   claim(key: string, ttlSeconds: number): Promise<boolean>;
 }
@@ -90,6 +112,12 @@ class RedisStore implements Store {
 
   async getJSON<T>(key: string) {
     return (await this.redis.get<T>(key)) ?? null;
+  }
+  async setField(key: string, field: string, value: unknown) {
+    await this.redis.hset(key, { [field]: value });
+  }
+  async getFields<T>(key: string) {
+    return (await this.redis.hgetall<Record<string, T>>(key)) ?? {};
   }
   async setJSON(key: string, value: unknown) {
     await this.redis.set(key, value);
@@ -141,6 +169,13 @@ class MemoryStore implements Store {
   }
   async setJSON(key: string, value: unknown) {
     this.kv.set(key, structuredClone(value));
+  }
+  async setField(key: string, field: string, value: unknown) {
+    const h = (this.kv.get(key) as Record<string, unknown>) ?? {};
+    this.kv.set(key, { ...h, [field]: structuredClone(value) });
+  }
+  async getFields<T>(key: string) {
+    return structuredClone((this.kv.get(key) as Record<string, T>) ?? {});
   }
   async claim(key: string, ttlSeconds: number) {
     const until = this.claims.get(key);

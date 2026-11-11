@@ -384,3 +384,10 @@ textarea {
 .link-btn.danger:hover { color: #f0a29c; }
 
 .eyebrow-next { color: var(--gold); }
+
+/* Meeting banishments */
+.tiles.small { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 8px; }
+.tiles.small .tile { padding: 10px; }
+.tiles.small .tile-n { font-size: 22px; }
+.countdown { margin-top: 16px; padding: 16px; border-radius: 12px; border: 1px solid var(--crimson); background: var(--crimson-soft); text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.countdown-n { font-family: var(--font-display), Georgia, serif; font-size: 48px; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }

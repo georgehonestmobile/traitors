@@ -20,12 +20,34 @@ const slackDate = (iso: string) => {
 const section = (text: string) => ({ type: "section", text: { type: "mrkdwn", text } });
 const context = (text: string) => ({ type: "context", elements: [{ type: "mrkdwn", text }] });
 
-export function voteMessage(round: Round, voter: Player): Message {
+/** The vote dropdown. Its block_id carries the round, so any message containing it can take a vote. */
+function ballotBlock(round: Round, voter: Player) {
   const options = round.players.slice(0, 100).map((p) => ({
     text: { type: "plain_text", text: (p.id === voter.id ? `${p.name} (you)` : p.name).slice(0, 75) },
     value: p.id,
   }));
+  return {
+    type: "actions",
+    block_id: voteBlockId(round.id),
+    elements: [
+      {
+        type: "static_select",
+        action_id: VOTE_ACTION_ID,
+        placeholder: { type: "plain_text", text: "Choose a player…" },
+        options,
+        confirm: {
+          title: { type: "plain_text", text: "Lock in your vote?" },
+          text: { type: "mrkdwn", text: "Once cast, your vote *cannot* be changed." },
+          confirm: { type: "plain_text", text: "Lock it in" },
+          deny: { type: "plain_text", text: "Not yet" },
+          style: "danger",
+        },
+      },
+    ],
+  };
+}
 
+export function voteMessage(round: Round, voter: Player): Message {
   return {
     text: `🗡️ ${round.title}: who do you believe is a Traitor? Voting closes ${slackDate(round.closesAt)}.`,
     blocks: [
@@ -34,27 +56,113 @@ export function voteMessage(round: Round, voter: Player): Message {
         `*${esc(round.title)}*\n\nThe time has come. Who do you believe is a *Traitor*?\n\n` +
           `Voting closes *${slackDate(round.closesAt)}*. Your vote is *final* once cast, and will be revealed at the Round Table.`,
       ),
-      {
-        type: "actions",
-        block_id: voteBlockId(round.id),
-        elements: [
-          {
-            type: "static_select",
-            action_id: VOTE_ACTION_ID,
-            placeholder: { type: "plain_text", text: "Choose a player…" },
-            options,
-            confirm: {
-              title: { type: "plain_text", text: "Lock in your vote?" },
-              text: { type: "mrkdwn", text: "Once cast, your vote *cannot* be changed." },
-              confirm: { type: "plain_text", text: "Lock it in" },
-              deny: { type: "plain_text", text: "Not yet" },
-              style: "danger",
-            },
-          },
-        ],
-      },
+      ballotBlock(round, voter),
       context(`Eligible players: ${round.players.map((p) => esc(p.name)).join(", ")}`),
     ],
+  };
+}
+
+/* ---------------- Meeting banishments ---------------- */
+
+export const RSVP_YES = "rsvp_yes";
+export const RSVP_NO = "rsvp_no";
+export const rsvpBlockId = (roundId: string) => `rsvp:${roundId}`;
+export const roundIdFromRsvpBlockId = (blockId: string) =>
+  blockId.startsWith("rsvp:") ? blockId.slice("rsvp:".length) : null;
+
+const rsvpButtons = (round: Round, which: ("yes" | "no")[]) => ({
+  type: "actions",
+  block_id: rsvpBlockId(round.id),
+  elements: which.map((w) =>
+    w === "yes"
+      ? { type: "button", action_id: RSVP_YES, style: "primary", text: { type: "plain_text", text: "✅ I'll be there", emoji: true }, value: "yes" }
+      : { type: "button", action_id: RSVP_NO, text: { type: "plain_text", text: "❌ I can't make it", emoji: true }, value: "no" },
+  ),
+});
+
+/** Sent the day before: will you be at the banishment meeting? */
+export function rsvpMessage(round: Round): Message {
+  const m = round.meeting!;
+  return {
+    text: `Banishment meeting ${slackDate(m.at)}: will you be there? Please reply by ${slackDate(m.rsvpClosesAt)}.`,
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "🕯️ A banishment meeting is coming", emoji: true } },
+      section(
+        `*${esc(round.title)}* takes place *${slackDate(m.at)}*.
+
+Will you be there? Please reply by *${slackDate(m.rsvpClosesAt)}*.`,
+      ),
+      rsvpButtons(round, ["yes", "no"]),
+      context("If you'll be there, your ballot arrives during the meeting. If you can't make it, you'll vote in advance."),
+    ],
+  };
+}
+
+/** Their reply, with the advance ballot if they can't make it. */
+export function rsvpAnsweredMessage(round: Round, voter: Player, answer: "yes" | "no", canChange: boolean): Message {
+  const m = round.meeting!;
+  if (answer === "yes") {
+    return {
+      text: "You'll be at the meeting. Your ballot arrives during it.",
+      blocks: [
+        section(`✅ *${esc(round.title)}*
+
+See you at the meeting, *${slackDate(m.at)}*. Your ballot will arrive here during the meeting, and you'll have one minute to vote.`),
+        ...(canChange ? [rsvpButtons(round, ["no"]), context(`You can change your answer until ${slackDate(m.rsvpClosesAt)}.`)] : []),
+      ],
+    };
+  }
+  return {
+    text: "You can't make the meeting, so please vote now.",
+    blocks: [
+      section(`❌ *${esc(round.title)}*
+
+Thanks for letting us know. As you can't be at the meeting, please nominate who you believe is a *Traitor* now. Your vote will be read out at the meeting.`),
+      ballotBlock(round, voter),
+      context(`Advance votes close when the meeting starts, ${slackDate(m.at)}.`),
+      ...(canChange ? [rsvpButtons(round, ["yes"])] : []),
+    ],
+  };
+}
+
+export function rsvpClosedMessage(round: Round): Message {
+  return {
+    text: "Replies have closed.",
+    blocks: [section(`*${esc(round.title)}*
+
+Replies closed ${slackDate(round.meeting!.rsvpClosesAt)}. If you're at the meeting, your ballot will arrive during it.`)],
+  };
+}
+
+/** Sent in the meeting: one minute to vote. */
+export function meetingBallotMessage(round: Round, voter: Player): Message {
+  const closes = round.meeting!.votingClosesAt!;
+  return {
+    text: "⏱️ Vote now: you have one minute.",
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "⏱️ Vote now: one minute", emoji: true } },
+      section(`*${esc(round.title)}*
+
+Who do you believe is a *Traitor*? You have *one minute*. If you don't vote in time, your vote won't count.`),
+      ballotBlock(round, voter),
+      context(`Voting closes at <!date^${Math.floor(Date.parse(closes) / 1000)}^{time_secs}|${new Date(closes).toUTCString()}>.`),
+    ],
+  };
+}
+
+export function meetingWaitMessage(round: Round): Message {
+  return {
+    text: "Your ballot will arrive during the meeting.",
+    blocks: [section(`*${esc(round.title)}*\n\nAdvance voting is only for players who can't make the meeting, and closes when it starts. If you're at the meeting, your ballot arrives during it.`)],
+  };
+}
+
+export function timeUpMessage(round: Round): Message {
+  return {
+    text: "Time's up. Your vote wasn't counted.",
+    blocks: [section(`⌛ *${esc(round.title)}*
+
+Time's up. Your vote wasn't counted.`)],
   };
 }
 
@@ -63,7 +171,11 @@ export function votedMessage(round: Round, target: Player): Message {
     text: `Your vote is locked in: ${target.name}.`,
     blocks: [
       section(`🗳️ *${esc(round.title)}*\n\nYour vote is locked in: *${esc(target.name)}*.`),
-      context(`Votes will be revealed at the Round Table. Voting closes ${slackDate(round.closesAt)}.`),
+      context(
+        round.format === "meeting"
+          ? "Votes will be revealed at the meeting."
+          : `Votes will be revealed at the Round Table. Voting closes ${slackDate(round.closesAt)}.`,
+      ),
     ],
   };
 }

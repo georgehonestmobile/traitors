@@ -22,6 +22,19 @@ const DURATIONS = [
 const fmt = (d: Date) =>
   d.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
+/** Mirrors the server: RSVPs 9am–5pm the day before (local time), or now + 1 hour if that's passed. */
+function rsvpPreview(meeting: Date) {
+  const now = Date.now();
+  const day = new Date(meeting.getFullYear(), meeting.getMonth(), meeting.getDate() - 1);
+  let opens = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9).getTime();
+  let closes = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 17).getTime();
+  const now_ = opens < now;
+  if (now_) opens = now;
+  if (closes <= opens) closes = opens + 60 * 60 * 1000;
+  if (closes > meeting.getTime()) closes = meeting.getTime();
+  return { opensNow: now_, opens: new Date(opens), closes: new Date(closes) };
+}
+
 export function NewRoundForm({
   players,
   lastRoundPlayerIds,
@@ -39,12 +52,16 @@ export function NewRoundForm({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openNow, setOpenNow] = useState(true);
   const [test, setTest] = useState(false);
+  const [format, setFormat] = useState<"meeting" | "remote">("meeting");
+  const [meetingAt, setMeetingAt] = useState("");
   // Times depend on the browser's clock and timezone, so fill them in after mount.
   const [opensAt, setOpensAt] = useState("");
   const [closesAt, setClosesAt] = useState("");
   useEffect(() => {
     setOpensAt(toLocalInput(new Date(Date.now() + 60 * 60 * 1000)));
     setClosesAt(toLocalInput(new Date(Date.now() + 30 * 60 * 1000)));
+    const t = new Date();
+    setMeetingAt(toLocalInput(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10)));
   }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +83,12 @@ export function NewRoundForm({
   const closeDate = new Date(closesAt);
   const setDuration = (mins: number) => setClosesAt(toLocalInput(new Date(openDate.getTime() + mins * 60000)));
 
-  const valid = selected.size >= 2 && !Number.isNaN(closeDate.getTime()) && closeDate > openDate;
+  const meeting = format === "meeting";
+  const meetingDate = new Date(meetingAt);
+  const meetingValid = !Number.isNaN(meetingDate.getTime()) && meetingDate.getTime() > Date.now();
+  const rsvp = meetingValid ? rsvpPreview(meetingDate) : null;
+  const valid =
+    selected.size >= 2 && (meeting ? meetingValid : !Number.isNaN(closeDate.getTime()) && closeDate > openDate);
   const selectedNames = players.filter((p) => selected.has(p.id)).map((p) => p.name);
 
   async function submit(e: React.FormEvent) {
@@ -81,8 +103,10 @@ export function NewRoundForm({
           title,
           playerIds: [...selected],
           opensAt: openNow ? undefined : new Date(opensAt).toISOString(),
-          closesAt: closeDate.toISOString(),
+          closesAt: meeting ? undefined : closeDate.toISOString(),
           test,
+          format,
+          meetingAt: meeting ? meetingDate.toISOString() : undefined,
         }),
       });
       const data = await res.json();
@@ -98,6 +122,19 @@ export function NewRoundForm({
     <form className="panel" onSubmit={submit}>
       <h2 className="panel-title">Call a vote</h2>
       <p className="panel-sub">Each selected player gets a private Slack DM and can vote for any selected player.</p>
+
+      <div className="field">
+        <div className="label"><span>Format</span></div>
+        <div className="chips">
+          <button type="button" className={`chip${meeting ? " on" : ""}`} onClick={() => setFormat("meeting")}>🗣️ Meeting banishment</button>
+          <button type="button" className={`chip${!meeting ? " on" : ""}`} onClick={() => setFormat("remote")}>💬 Remote (Slack)</button>
+        </div>
+        <p className="hint">
+          {meeting
+            ? "Players are asked the day before (9am, reply by 5pm) if they'll be at the meeting. Those who can't come vote in advance; everyone else votes in the meeting, with one minute, when you request votes."
+            : "Players vote in Slack over a window you set. Afterwards you announce the results in a Slack channel (or face to face)."}
+        </p>
+      </div>
 
       <div className="field">
         <label className="label" htmlFor="title">Round name</label>
@@ -165,6 +202,14 @@ export function NewRoundForm({
         </div>
       </div>
 
+      {meeting && (
+        <div className="field">
+          <label className="label" htmlFor="meeting-at"><span>Meeting starts</span></label>
+          <input id="meeting-at" type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} required />
+        </div>
+      )}
+
+      {!meeting && (<>
       <div className="field">
         <div className="label"><span>Voting opens</span></div>
         <div className="chips" style={{ marginBottom: openNow ? 0 : 10 }}>
@@ -187,6 +232,7 @@ export function NewRoundForm({
         </div>
         <input type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} aria-label="Voting closes at" required />
       </div>
+      </>)}
 
       {error && <div className="error">{error}</div>}
 
@@ -195,6 +241,21 @@ export function NewRoundForm({
           "\u00a0"
         ) : selected.size < 2 ? (
           "Pick at least two players."
+        ) : meeting ? (
+          !rsvp ? (
+            "Choose a meeting time in the future."
+          ) : (
+            <>
+              {test ? <>🧪 Test round: nobody is DM&apos;d. </> : null}
+              Meeting <b>{fmt(meetingDate)}</b> with{" "}
+              <b>{selectedNames.length <= 4 ? selectedNames.join(", ") : `${selected.size} players`}</b>.
+              {!test && (
+                <>
+                  {" "}RSVPs go out <b>{rsvp.opensNow ? "now" : fmt(rsvp.opens)}</b>, replies by <b>{fmt(rsvp.closes)}</b>.
+                </>
+              )}
+            </>
+          )
         ) : closeDate <= openDate ? (
           "The deadline needs to be after voting opens."
         ) : (
@@ -208,7 +269,17 @@ export function NewRoundForm({
       </div>
 
       <button className="btn primary block" type="submit" disabled={!valid || busy}>
-        {busy ? "Creating…" : test ? "Create test round" : openNow ? "Send the ballots" : "Schedule the ballots"}
+        {busy
+          ? "Creating…"
+          : test
+            ? "Create test round"
+            : meeting
+              ? rsvp?.opensNow
+                ? "Send the RSVPs"
+                : "Schedule the RSVPs"
+              : openNow
+                ? "Send the ballots"
+                : "Schedule the ballots"}
       </button>
     </form>
   );
