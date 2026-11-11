@@ -15,11 +15,13 @@ type Props = {
   castSize: number;
   stats: GameStats;
   nextName: string;
+  /** e.g. "Next: Fri 13 Nov banishment" */
+  nextLabel?: string;
 };
 
 const winnerLabel = (w: Winner) => (w === "faithful" ? "The Faithful win" : "The Traitors win");
 
-export function GameHeader({ name, startedAt, status, winner, castSize, stats, nextName }: Props) {
+export function GameHeader({ name, startedAt, status, winner, castSize, stats, nextName, nextLabel }: Props) {
   const router = useRouter();
   const [form, setForm] = useState<"end" | "new" | null>(null);
   const [pick, setPick] = useState<Winner>(stats.suggestion?.winner ?? "faithful");
@@ -55,7 +57,10 @@ export function GameHeader({ name, startedAt, status, winner, castSize, stats, n
     <section className="panel game-header">
       <div className="game-title-row">
         <div>
-          <div className="eyebrow">{ended ? "Game over" : "Game in progress"} · started {startedAt}</div>
+          <div className="eyebrow">
+            {ended ? "Game over" : "Game in progress"} · started {startedAt}
+            {nextLabel && <> · <span className="eyebrow-next">{nextLabel}</span></>}
+          </div>
           <h1>{name}</h1>
           {ended && winner && <div className={`winner ${winner}`}>{winnerLabel(winner)}</div>}
         </div>

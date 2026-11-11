@@ -9,6 +9,8 @@ import { listPlayers } from "@/lib/slack";
  *   add { playerIds }           remove { playerId }
  *   role { playerId, role }     recruit { playerId }
  *   banish { playerId }         murder { playerId }  restore { playerId }
+ *   schedule-import { text }    schedule-clear       schedule-start { value }
+ *   schedule-add { date, kind } schedule-update { id, date?, kind?, skipped? }  schedule-delete { id }
  */
 export async function POST(req: Request) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -56,6 +58,28 @@ export async function POST(req: Request) {
         break;
       case "restore":
         await games.unbanish(game.id, { playerId });
+        break;
+      case "schedule-import":
+        await games.importSchedule(game.id, String(body.text ?? ""));
+        break;
+      case "schedule-clear":
+        await games.clearSchedule(game.id);
+        break;
+      case "schedule-start":
+        await games.setPlannedStart(game.id, Number(body.value));
+        break;
+      case "schedule-add":
+        await games.addScheduleItem(game.id, String(body.date ?? ""), body.kind);
+        break;
+      case "schedule-update":
+        await games.updateScheduleItem(game.id, String(body.id ?? ""), {
+          ...(body.date !== undefined ? { date: String(body.date) } : {}),
+          ...(body.kind !== undefined ? { kind: body.kind } : {}),
+          ...(body.skipped !== undefined ? { skipped: body.skipped === true } : {}),
+        });
+        break;
+      case "schedule-delete":
+        await games.deleteScheduleItem(game.id, String(body.id ?? ""));
         break;
       default:
         return NextResponse.json({ error: "Unknown action." }, { status: 400 });

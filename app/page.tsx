@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
-import { gameStats, getCurrentGame, getNotPlaying } from "@/lib/game";
+import { departures, gameStats, getCurrentGame, getNotPlaying } from "@/lib/game";
+import { formatDay, summarize, todayIn } from "@/lib/schedule";
 import { roundStatus } from "@/lib/rounds";
 import { listPlayers } from "@/lib/slack";
 import { getStore, type Player, type Round } from "@/lib/store";
@@ -9,6 +10,7 @@ import { CastPanel } from "@/components/CastPanel";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
 import { GameHeader } from "@/components/GameHeader";
 import { NotPlayingPanel } from "@/components/NotPlayingPanel";
+import { SchedulePanel } from "@/components/SchedulePanel";
 import { StatusPill } from "@/components/StatusPill";
 import { Timeline } from "@/components/Timeline";
 import { TopBar } from "@/components/TopBar";
@@ -69,6 +71,9 @@ export default async function Home() {
   const earlier = rounds.filter((r) => r.gameId !== game.id);
   const now = Date.now();
   const gameNumber = Number(game.name.match(/^Game (\d+)$/)?.[1]);
+  const today = todayIn(process.env.APP_TIMEZONE || "Europe/London");
+  const schedule = summarize(game.schedule ?? [], game.plannedStart ?? game.cast.length, departures(game), today);
+  const nextLabel = schedule.next ? `Next: ${formatDay(schedule.next.date)} ${schedule.next.kind === "end" ? "end game" : schedule.next.kind}` : undefined;
 
   const outLabels = Object.fromEntries(
     game.cast
@@ -87,6 +92,7 @@ export default async function Home() {
         castSize={game.cast.length}
         stats={gameStats(game)}
         nextName={gameNumber ? `Game ${gameNumber + 1}` : "New game"}
+        nextLabel={game.status === "active" ? nextLabel : undefined}
       />
 
       <div className="grid">
@@ -107,6 +113,8 @@ export default async function Home() {
         </div>
 
         <div className="side">
+          <SchedulePanel summary={schedule} plannedStart={game.plannedStart} today={today} ended={game.status === "ended"} />
+
           <section className="panel">
             <div className="reveal-head">
               <h2 className="panel-title">Rounds</h2>

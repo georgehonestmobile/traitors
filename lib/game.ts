@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { parseSchedule, type Departure, type ScheduleItem, type ScheduleKind } from "./schedule";
 import { getStore, type Player } from "./store";
 
 /**
@@ -52,6 +53,10 @@ export type Game = {
   cast: CastMember[];
   /** Newest last. */
   events: GameEvent[];
+  /** Planned murders, banishments and the end game. */
+  schedule?: ScheduleItem[];
+  /** Players expected at the start of the schedule. */
+  plannedStart?: number;
 };
 
 /** Games saved before the cast existed only had a banished list. */
@@ -171,6 +176,68 @@ export function gameStats(game: Game): GameStats {
 export function activeIds(game: Game) {
   return game.cast.filter((c) => c.status === "in").map((c) => c.playerId);
 }
+
+/** Players who have left the game, in order. */
+export function departures(game: Game): Departure[] {
+  return game.cast
+    .filter((c) => c.status !== "in" && c.outAt)
+    .map((c) => ({ playerId: c.playerId, name: c.name, how: c.status as Departure["how"], at: c.outAt! }))
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/* ---------------- Schedule ---------------- */
+
+const KINDS: ScheduleKind[] = ["murder", "banishment", "end"];
+const validDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d));
+const newId = () => crypto.randomUUID().slice(0, 8);
+
+/** Replace the schedule with one pasted from a spreadsheet. */
+export const importSchedule = (gameId: string, text: string) =>
+  update(gameId, (g) => {
+    const { items, plannedStart } = parseSchedule(text, g.createdAt.slice(0, 10));
+    if (!items.length) throw new GameError("Couldn't find any dates with Murder, Banishment or End Game in that text.");
+    g.schedule = items.map((it) => ({ ...it, id: newId() }));
+    g.plannedStart = plannedStart ?? g.plannedStart ?? (g.cast.length || undefined);
+  });
+
+export const clearSchedule = (gameId: string) =>
+  update(gameId, (g) => {
+    g.schedule = [];
+  });
+
+export const setPlannedStart = (gameId: string, n: number) =>
+  update(gameId, (g) => {
+    if (!Number.isInteger(n) || n < 1 || n > 500) throw new GameError("Enter a number of players.");
+    g.plannedStart = n;
+  });
+
+export const addScheduleItem = (gameId: string, date: string, kind: ScheduleKind) =>
+  update(gameId, (g) => {
+    if (!validDate(date)) throw new GameError("Choose a date.");
+    if (!KINDS.includes(kind)) throw new GameError("Unknown event type.");
+    g.schedule = [...(g.schedule ?? []), { id: newId(), date, kind }];
+  });
+
+export const updateScheduleItem = (gameId: string, id: string, patch: { date?: string; kind?: ScheduleKind; skipped?: boolean }) =>
+  update(gameId, (g) => {
+    const it = (g.schedule ?? []).find((x) => x.id === id);
+    if (!it) throw new GameError("That event isn't in the schedule.");
+    if (patch.date !== undefined) {
+      if (!validDate(patch.date)) throw new GameError("Choose a date.");
+      it.date = patch.date;
+    }
+    if (patch.kind !== undefined) {
+      if (!KINDS.includes(patch.kind)) throw new GameError("Unknown event type.");
+      it.kind = patch.kind;
+      if (patch.kind === "end") it.skipped = undefined;
+    }
+    if (patch.skipped !== undefined) it.skipped = patch.skipped || undefined;
+  });
+
+export const deleteScheduleItem = (gameId: string, id: string) =>
+  update(gameId, (g) => {
+    g.schedule = (g.schedule ?? []).filter((x) => x.id !== id);
+  });
 
 /* ---------------- Game lifecycle ---------------- */
 
