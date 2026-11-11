@@ -51,7 +51,6 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
   }
 
   const rows = summary.rows;
-  const offDays = rows.filter((r) => r.offDay && !r.skipped);
   const pasteForm = (
     <div className="inline-form" style={{ marginTop: 12 }}>
       <label className="label" htmlFor="schedule-paste"><span>Paste rows from a spreadsheet</span></label>
@@ -161,12 +160,6 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
           </p>
         )}
         {summary.extra > 0 && <p>➕ {summary.extra} more {summary.extra === 1 ? "player has" : "players have"} left than the schedule plans for.</p>}
-        {offDays.length > 0 && (
-          <p className="muted">
-            📅 {offDays.length} {offDays.length === 1 ? "banishment isn't" : "banishments aren't"} on a Wednesday or Friday:{" "}
-            {offDays.map((r) => formatDay(r.date)).join(", ")}.
-          </p>
-        )}
       </div>
 
       <div className="schedule-scroll">
@@ -181,8 +174,8 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
                   <span className="date-cell">
                     <button
                       type="button"
-                      className={`date-btn${r.offDay ? " offday" : ""}`}
-                      title={r.offDay ? "Banishment not on a Wednesday or Friday. Click to move." : "Click to move"}
+                      className="date-btn"
+                      title="Click to move"
                       disabled={busy}
                       onClick={(e) => {
                         const input = e.currentTarget.nextElementSibling as HTMLInputElement | null;

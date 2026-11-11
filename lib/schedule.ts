@@ -24,8 +24,6 @@ export type ScheduleRow = ScheduleItem & {
   after: number;
   status: "done" | "skipped" | "today" | "overdue" | "upcoming";
   actual?: Departure;
-  /** A banishment not on a Wednesday or Friday. */
-  offDay: boolean;
   /** The actual departure was a different kind of event to the one planned. */
   mismatch: boolean;
 };
@@ -44,7 +42,6 @@ export type ScheduleSummary = {
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-export const BANISHMENT_DAYS = [3, 5]; // Wednesday, Friday
 
 const dayOfWeek = (date: string) => new Date(`${date}T12:00:00Z`).getUTCDay();
 export const weekdayName = (date: string) => WEEKDAYS[dayOfWeek(date)];
@@ -71,12 +68,7 @@ export function summarize(items: ScheduleItem[], plannedStart: number, departure
   let overdue = 0;
   let skipped = 0;
   const rows: ScheduleRow[] = sortSchedule(items).map((it) => {
-    const base = {
-      ...it,
-      weekday: weekdayName(it.date),
-      offDay: it.kind === "banishment" && !BANISHMENT_DAYS.includes(dayOfWeek(it.date)),
-      mismatch: false,
-    };
+    const base = { ...it, weekday: weekdayName(it.date), mismatch: false };
     const timing = it.date < today ? "overdue" : it.date === today ? "today" : "upcoming";
     if (it.kind === "end") return { ...base, before: remaining, after: remaining, status: timing === "overdue" ? "done" : timing };
     if (it.skipped) {

@@ -377,8 +377,6 @@ textarea {
   font: inherit; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer; white-space: nowrap;
   border-bottom: 1px dotted var(--border-strong);
 }
-.date-btn.offday { color: var(--gold); }
-.date-btn.offday::after { content: " ⚠"; font-size: 11px; }
 .today-tag { color: var(--gold); font-weight: 600; }
 .row-actions { white-space: nowrap; text-align: right; width: 1%; }
 .link-btn { font: inherit; font-size: 12.5px; background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; }
