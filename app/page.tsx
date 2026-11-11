@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
-import { getCurrentGame, getNotPlaying } from "@/lib/game";
+import { gameStats, getCurrentGame, getNotPlaying } from "@/lib/game";
 import { roundStatus } from "@/lib/rounds";
 import { listPlayers } from "@/lib/slack";
 import { getStore, type Player, type Round } from "@/lib/store";
+import { CastPanel } from "@/components/CastPanel";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
-import { GamePanel } from "@/components/GamePanel";
-import { NewRoundForm } from "@/components/NewRoundForm";
+import { GameHeader } from "@/components/GameHeader";
 import { NotPlayingPanel } from "@/components/NotPlayingPanel";
 import { StatusPill } from "@/components/StatusPill";
+import { Timeline } from "@/components/Timeline";
 import { TopBar } from "@/components/TopBar";
 
 export const dynamic = "force-dynamic";
@@ -57,49 +58,63 @@ export default async function Home() {
     store.listRounds(100),
   ]);
   const notPlaying = new Set(notPlayingIds);
-  const players = everyone.filter((p) => !notPlaying.has(p.id));
-  const banishedIds = new Set(game.banished.map((b) => b.playerId));
+  const directory = everyone.filter((p) => !notPlaying.has(p.id));
+  const castIds = new Set(game.cast.map((c) => c.playerId));
 
   const voteCounts = new Map(
     await Promise.all(rounds.map(async (r) => [r.id, (await store.getVotes(r.id)).length] as const)),
   );
+  const roundTitles = new Map(rounds.map((r) => [r.id, r.title]));
   const thisGame = rounds.filter((r) => r.gameId === game.id);
   const earlier = rounds.filter((r) => r.gameId !== game.id);
   const now = Date.now();
   const gameNumber = Number(game.name.match(/^Game (\d+)$/)?.[1]);
 
+  const outLabels = Object.fromEntries(
+    game.cast
+      .filter((c) => c.status !== "in")
+      .map((c) => [c.playerId, (c.outRoundId && roundTitles.get(c.outRoundId)) || (c.outAt ? formatDateTime(c.outAt) : "")]),
+  );
+
   return (
     <div className="shell">
       <TopBar />
+      <GameHeader
+        name={game.name}
+        startedAt={formatDateTime(game.createdAt)}
+        status={game.status}
+        winner={game.winner}
+        castSize={game.cast.length}
+        stats={gameStats(game)}
+        nextName={gameNumber ? `Game ${gameNumber + 1}` : "New game"}
+      />
+
       <div className="grid">
-        {slackError ? (
-          <div className="panel">
-            <h2 className="panel-title">Couldn&apos;t load Slack members</h2>
-            <div className="error" style={{ marginTop: 12 }}>{slackError}</div>
-            <p className="panel-sub">Check SLACK_BOT_TOKEN and that the app has the users:read scope.</p>
-          </div>
-        ) : (
-          <NewRoundForm
-            players={players}
-            banishedIds={[...banishedIds]}
-            lastRoundPlayerIds={thisGame[0]?.players.map((p) => p.id) ?? []}
+        <div className="side">
+          {slackError ? (
+            <div className="panel">
+              <h2 className="panel-title">Couldn&apos;t load Slack members</h2>
+              <div className="error" style={{ marginTop: 12 }}>{slackError}</div>
+              <p className="panel-sub">Check SLACK_BOT_TOKEN and that the app has the users:read scope.</p>
+            </div>
+          ) : null}
+          <CastPanel
+            cast={game.cast}
+            addable={directory.filter((p) => !castIds.has(p.id))}
+            ended={game.status === "ended"}
+            outLabels={outLabels}
           />
-        )}
+        </div>
 
         <div className="side">
-          <GamePanel
-            name={game.name}
-            startedAt={formatDateTime(game.createdAt)}
-            banished={game.banished}
-            candidates={players.filter((p) => !banishedIds.has(p.id))}
-            nextName={gameNumber ? `Game ${gameNumber + 1}` : "New game"}
-          />
-
           <section className="panel">
-            <h2 className="panel-title">Rounds</h2>
+            <div className="reveal-head">
+              <h2 className="panel-title">Rounds</h2>
+              {game.status === "active" && <Link className="btn ghost small" href="/rounds/new">+ Call a vote</Link>}
+            </div>
             <p className="panel-sub">This game, most recent first.</p>
             <div className="rounds">
-              {!thisGame.length && <div className="empty">No rounds in this game yet. Call your first vote.</div>}
+              {!thisGame.length && <div className="empty">No rounds in this game yet.</div>}
               {thisGame.map((r) => (
                 <RoundCard key={r.id} round={r} votes={voteCounts.get(r.id) ?? 0} now={now} />
               ))}
@@ -116,8 +131,10 @@ export default async function Home() {
             )}
           </section>
 
+          <Timeline events={game.events} />
+
           {!slackError && (
-            <NotPlayingPanel hidden={everyone.filter((p) => notPlaying.has(p.id))} others={players} />
+            <NotPlayingPanel hidden={everyone.filter((p) => notPlaying.has(p.id))} others={directory} />
           )}
         </div>
       </div>

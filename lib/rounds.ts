@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import * as slack from "./slack";
 import * as msg from "./messages";
-import { getCurrentGame, getNotPlaying } from "./game";
+import { activeIds, getCurrentGame, getNotPlaying } from "./game";
 import { getStore, type Delivery, type Player, type Round } from "./store";
 
 export type RoundStatus = "scheduled" | "open" | "closed" | "cancelled";
@@ -70,11 +70,13 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     return p;
   });
   const game = await getCurrentGame();
+  if (game.status === "ended" && !input.test) throw new RoundError(`${game.name} has ended. Start a new game first.`);
   const notPlaying = new Set(await getNotPlaying(everyone));
-  const banished = new Set(game.banished.map((b) => b.playerId));
-  const barred = players.filter((p) => notPlaying.has(p.id) || banished.has(p.id));
+  // With a cast, only players still in the game can take part; without one, anyone can.
+  const active = new Set(activeIds(game));
+  const barred = players.filter((p) => notPlaying.has(p.id) || (game.cast.length > 0 && !active.has(p.id)));
   if (barred.length) {
-    throw new RoundError(`${barred.map((p) => p.name).join(", ")} can't play: banished or marked as not playing.`);
+    throw new RoundError(`${barred.map((p) => p.name).join(", ")} can't play: not in the game, out, or marked as not playing.`);
   }
 
   const round: Round = {

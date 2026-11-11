@@ -143,8 +143,8 @@ export function NewRoundForm({
                   key={p.id}
                   className="player banished"
                   disabled
-                  aria-label={`${p.name}, banished`}
-                  title={`${p.name} has been banished from this game`}
+                  aria-label={`${p.name}, out of the game`}
+                  title={`${p.name} is out of this game`}
                 >
                   <Avatar player={p} />
                   <span className="name">{p.name}</span>

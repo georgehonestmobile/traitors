@@ -45,11 +45,17 @@ For banishments done in person, choose **🗣️ Face to face** when starting th
 
 "Full script" shows every card at once for preparation.
 
-## Games, banished players and who's playing
+## Running a game
 
-- **Games:** rounds belong to the current game (shown top right of the dashboard). When a real round's reveal finishes, the banished player is added to the game's **Banished** list and greyed out in the player picker for the rest of that game. You can also **mark someone as banished** by hand, or click × to bring them back. **New game** starts a fresh game with nobody banished; older rounds move under "Earlier rounds". Test rounds never banish anyone.
-- **Not playing:** people who should never appear in the player list (e.g. the host). Edit the list in the "Not playing" panel at the bottom right. It starts with the defaults in `lib/game.ts`.
-- **Deleting rounds:** each round has a Delete button (on its card and its page). Deleting a live real round withdraws the players' ballots first. Deleting a round doesn't change the Banished list.
+The dashboard is the game's control room:
+
+- **Game header:** the game's name and status, with counts of players still in, Faithful and Traitors left, banished and murdered. **Call a vote**, **End game** (choose the winner) and **New game** (optionally with the same players, everyone back in as Faithful) live here. When every Traitor is out, or the Traitors match or outnumber the Faithful, it suggests ending the game.
+- **The cast:** add the players taking part, then use each player's **Change…** menu to make them a Traitor (the originals), **recruit** them as a Traitor mid-game, **banish** or **murder** them (out of the game), bring them back, or remove them if added by mistake. Players listed alphabetically so the order never hints at roles.
+- **Votes use the cast:** only players still in can be picked for a vote; those who are out are greyed out. A real round's reveal (Slack or face to face) banishes its loser automatically. Until you add a cast, any Slack member can be picked.
+- **Timeline:** everything that has happened, newest first, including each banished or murdered player's role.
+- **Hide roles:** blurs every role and Traitor count, e.g. while screen-sharing. Remembered per browser.
+- **Not playing:** people who never appear in any player list (e.g. the host). It starts with the defaults in `lib/game.ts`.
+- **Deleting rounds:** each round has a Delete button. Deleting a live real round withdraws the players' ballots first.
 
 ## Test rounds
 

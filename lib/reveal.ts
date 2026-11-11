@@ -571,7 +571,7 @@ export async function resumeReveal(roundId: string) {
 async function recordBanished(round: Round, state: RevealState) {
   if (round.test || !round.gameId) return;
   const player = playerById(round, outcomeOf(state).banished[0] ?? "");
-  if (player) await banish(round.gameId, player, round.id);
+  if (player) await banish(round.gameId, player, { id: round.id, title: round.title });
 }
 
 /** Forget the reveal so it can be run again. Messages already posted in Slack stay. */
