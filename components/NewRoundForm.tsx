@@ -39,17 +39,20 @@ export function NewRoundForm({
   players,
   lastRoundPlayerIds,
   banishedIds,
+  preselectedIds = [],
 }: {
   players: Player[];
   lastRoundPlayerIds: string[];
   banishedIds: string[];
+  /** Ticked when the form opens (the players still in the game). */
+  preselectedIds?: string[];
 }) {
   const banished = new Set(banishedIds);
   const canPlay = (id: string) => !banished.has(id);
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(preselectedIds.filter((id) => !banishedIds.includes(id))));
   const [openNow, setOpenNow] = useState(true);
   const [test, setTest] = useState(false);
   const [format, setFormat] = useState<"meeting" | "remote">("meeting");

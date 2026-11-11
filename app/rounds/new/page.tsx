@@ -52,7 +52,13 @@ export default async function NewRoundPage() {
             <p className="panel-sub">Start a new game from the dashboard to call another vote.</p>
           </div>
         ) : (
-          <NewRoundForm players={players} banishedIds={outIds} lastRoundPlayerIds={lastRound?.players.map((p) => p.id) ?? []} />
+          <NewRoundForm
+            players={players}
+            banishedIds={outIds}
+            lastRoundPlayerIds={lastRound?.players.map((p) => p.id) ?? []}
+            // With a cast, everyone still in the game is ticked to start with.
+            preselectedIds={players.map((p) => p.id).filter((id) => !outIds.includes(id) && game.cast.length > 0)}
+          />
         )}
       </div>
     </div>
