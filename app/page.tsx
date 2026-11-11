@@ -2,7 +2,9 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
 import { departures, gameStats, getCurrentGame, getNotPlaying } from "@/lib/game";
+import { getReveal } from "@/lib/reveal";
 import { formatDay, summarize, todayIn } from "@/lib/schedule";
+import { buildTodos, roundForRow } from "@/lib/todo";
 import { roundStatus } from "@/lib/rounds";
 import { listPlayers } from "@/lib/slack";
 import { getStore, type Player, type Round } from "@/lib/store";
@@ -13,6 +15,7 @@ import { NotPlayingPanel } from "@/components/NotPlayingPanel";
 import { SchedulePanel } from "@/components/SchedulePanel";
 import { StatusPill } from "@/components/StatusPill";
 import { Timeline } from "@/components/Timeline";
+import { TodoPanel } from "@/components/TodoPanel";
 import { TopBar } from "@/components/TopBar";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +82,19 @@ export default async function Home() {
   const gameNumber = Number(game.name.match(/^Game (\d+)$/)?.[1]);
   const today = todayIn(process.env.APP_TIMEZONE || "Europe/London");
   const schedule = summarize(game.schedule ?? [], game.plannedStart ?? game.cast.length, departures(game), today);
+  const reveals = await Promise.all(
+    thisGame.filter((r) => roundStatus(r, now) === "closed").map(async (r) => [r.id, await getReveal(r.id)] as const),
+  );
+  const revealed = new Set(reveals.filter(([, st]) => st?.status === "done").map(([id]) => id));
+  const todos = buildTodos({ game, schedule, rounds: thisGame, revealed, today, now });
+  const setUp = Object.fromEntries(
+    schedule.rows
+      .filter((r) => r.kind === "banishment")
+      .flatMap((r) => {
+        const round = roundForRow(r, thisGame);
+        return round ? [[r.id, { id: round.id, title: round.title }]] : [];
+      }),
+  );
   const nextLabel = schedule.next ? `Next: ${formatDay(schedule.next.date)} ${schedule.next.kind === "end" ? "end game" : schedule.next.kind}` : undefined;
 
   const outLabels = Object.fromEntries(
@@ -101,6 +117,8 @@ export default async function Home() {
         nextLabel={game.status === "active" ? nextLabel : undefined}
       />
 
+      <TodoPanel todos={todos} />
+
       <div className="grid">
         <div className="side">
           {slackError ? (
@@ -119,7 +137,7 @@ export default async function Home() {
         </div>
 
         <div className="side">
-          <SchedulePanel summary={schedule} plannedStart={game.plannedStart} today={today} ended={game.status === "ended"} />
+          <SchedulePanel summary={schedule} plannedStart={game.plannedStart} today={today} ended={game.status === "ended"} setUp={setUp} />
 
           <section className="panel">
             <div className="reveal-head">

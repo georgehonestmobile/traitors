@@ -8,9 +8,16 @@ import { gameAction } from "./gameApi";
 const KIND_LABEL: Record<ScheduleKind, string> = { murder: "🔪 Murder", banishment: "🗡️ Banishment", end: "🏁 End game" };
 const KIND_SHORT: Record<ScheduleKind, string> = { murder: "Murder", banishment: "Banishment", end: "End game" };
 
-type Props = { summary: ScheduleSummary; plannedStart?: number; today: string; ended: boolean };
+type Props = {
+  summary: ScheduleSummary;
+  plannedStart?: number;
+  today: string;
+  ended: boolean;
+  /** Rounds already set up for scheduled banishments, by schedule event id. */
+  setUp?: Record<string, { id: string; title: string }>;
+};
 
-function Result({ row }: { row: ScheduleRow }) {
+function Result({ row, round }: { row: ScheduleRow; round?: { id: string; title: string } }) {
   if (row.status === "skipped") return <span className="muted">Skipped</span>;
   if (row.kind === "end") return row.status === "today" ? <span className="today-tag">Today</span> : null;
   if (row.actual) {
@@ -21,12 +28,13 @@ function Result({ row }: { row: ScheduleRow }) {
       </span>
     );
   }
+  if (round) return <a className="set-up-link" href={`/rounds/${round.id}`}>Set up ✓</a>;
   if (row.status === "overdue") return <span className="errc">Not recorded</span>;
   if (row.status === "today") return <span className="today-tag">Today</span>;
   return null;
 }
 
-export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
+export function SchedulePanel({ summary, plannedStart, today, ended, setUp = {} }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +92,7 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
 
   if (!rows.length) {
     return (
-      <section className="panel">
+      <section className="panel" id="schedule">
         <h2 className="panel-title">Schedule</h2>
         <p className="panel-sub">Plan when the murders and banishments happen, then track the game against it.</p>
         {error && <div className="error">{error}</div>}
@@ -102,7 +110,7 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
   const planned = summary.plannedEnd !== undefined ? summary.plannedEnd - summary.skipped : undefined;
 
   return (
-    <section className="panel">
+    <section className="panel" id="schedule">
       <div className="reveal-head">
         <h2 className="panel-title">Schedule</h2>
         <div className="actions">
@@ -212,7 +220,7 @@ export function SchedulePanel({ summary, plannedStart, today, ended }: Props) {
                 </td>
                 <td>
                   <span className="nowrap muted">{r.kind === "end" ? `${r.before} left` : `${r.before} → ${r.after}`}</span>
-                  <div className="row-result"><Result row={r} /></div>
+                  <div className="row-result"><Result row={r} round={setUp[r.id]} /></div>
                 </td>
                 <td className="row-actions">
                   {r.kind !== "end" && !r.actual && (

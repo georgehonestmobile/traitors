@@ -14,6 +14,7 @@ export async function POST(req: Request) {
       test: body.test === true,
       format: body.format === "meeting" ? "meeting" : "remote",
       meetingAt: body.meetingAt ? String(body.meetingAt) : undefined,
+      scheduleId: body.scheduleId ? String(body.scheduleId) : undefined,
     });
     return NextResponse.json({ id: round.id });
   } catch (e) {

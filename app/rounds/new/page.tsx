@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { getCurrentGame, getNotPlaying } from "@/lib/game";
+import { formatDay } from "@/lib/schedule";
 import { listPlayers } from "@/lib/slack";
 import { getStore, type Player } from "@/lib/store";
 import { NewRoundForm } from "@/components/NewRoundForm";
@@ -8,7 +9,7 @@ import { TopBar } from "@/components/TopBar";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewRoundPage() {
+export default async function NewRoundPage({ searchParams }: { searchParams: Promise<{ schedule?: string }> }) {
   await requireAdmin();
 
   let everyone: Player[] = [];
@@ -36,6 +37,13 @@ export default async function NewRoundPage() {
   const outIds = game.cast.filter((c) => c.status !== "in").map((c) => c.playerId);
   const lastRound = rounds.find((r) => r.gameId === game.id);
 
+  // Setting up a banishment from the schedule (the to-do list links here).
+  const { schedule: scheduleId } = await searchParams;
+  const scheduled = scheduleId ? game.schedule?.find((s) => s.id === scheduleId) : undefined;
+  const defaults = scheduled
+    ? { title: `${formatDay(scheduled.date)} banishment`, format: "meeting" as const, meetingDate: scheduled.date, scheduleId: scheduled.id }
+    : undefined;
+
   return (
     <div className="shell narrow">
       <TopBar />
@@ -58,6 +66,7 @@ export default async function NewRoundPage() {
             lastRoundPlayerIds={lastRound?.players.map((p) => p.id) ?? []}
             // With a cast, everyone still in the game is ticked to start with.
             preselectedIds={players.map((p) => p.id).filter((id) => !outIds.includes(id) && game.cast.length > 0)}
+            defaults={defaults}
           />
         )}
       </div>

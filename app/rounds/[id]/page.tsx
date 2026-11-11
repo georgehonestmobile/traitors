@@ -134,8 +134,8 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               rsvpOpen={!m.requestedAt && now >= Date.parse(m.rsvpOpensAt) && now < Date.parse(m.rsvpClosesAt)}
               rsvpClosed={now >= Date.parse(m.rsvpClosesAt)}
               counts={{
-                coming: Object.values(rsvps).filter((r) => r.answer === "yes").length,
-                cantCome: Object.values(rsvps).filter((r) => r.answer === "no").length,
+                coming: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes").length,
+                cantCome: round.players.filter((pl) => rsvps[pl.id]?.answer === "no").length,
                 advanceVotes,
                 noReply: round.players.filter((pl) => !rsvps[pl.id]).length,
                 players: round.players.length,

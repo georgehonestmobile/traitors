@@ -49,6 +49,8 @@ export type CreateRoundInput = {
   format?: "remote" | "meeting";
   /** ISO start of the meeting. */
   meetingAt?: string;
+  /** The schedule event this round is for. */
+  scheduleId?: string;
 };
 
 const HOUR = 60 * 60 * 1000;
@@ -124,6 +126,7 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     delivery: {},
     gameId: game.id,
     ...(input.test ? { test: true } : {}),
+    ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
     ...(meeting
       ? {
           format: "meeting" as const,

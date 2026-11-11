@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import { getStore, type Player, type Round } from "./store";
 import { RoundError, roundStatus } from "./rounds";
+import { removeFromOpenRounds } from "./departure";
 import { banish, unbanish } from "./game";
 import { resolveOutcome, type Outcome } from "./outcome";
 import { scriptBeats, scriptCard, type ScriptBeat, type ScriptCard } from "./script";
@@ -575,7 +576,9 @@ export async function resumeReveal(roundId: string) {
 async function recordBanished(round: Round, state: RevealState) {
   if (round.test || !round.gameId) return;
   const player = playerById(round, outcomeOf(state).banished[0] ?? "");
-  if (player) await banish(round.gameId, player, { id: round.id, title: round.title });
+  if (!player) return;
+  await banish(round.gameId, player, { id: round.id, title: round.title });
+  await removeFromOpenRounds(round.gameId, player, { exceptRoundId: round.id });
 }
 
 /** Forget the reveal so it can be run again. Messages already posted in Slack stay. */

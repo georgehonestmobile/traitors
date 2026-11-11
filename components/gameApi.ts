@@ -7,4 +7,5 @@ export async function gameAction(body: Record<string, unknown>) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data as { warning?: string };
 }

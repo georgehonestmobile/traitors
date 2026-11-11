@@ -28,7 +28,14 @@ function actionsFor(m: CastMember): Action[] {
       list.push({ value: "role:faithful", label: "Make Faithful" });
     }
     list.push({ value: "banish", label: "Banish", confirm: (n) => `Banish ${n}? They'll be out of the game.` });
-    if (m.role === "faithful") list.push({ value: "murder", label: "Murder", confirm: (n) => `Record that ${n} was murdered?` });
+    if (m.role === "faithful") {
+      list.push({
+        value: "murder",
+        label: "Murder",
+        confirm: (n) =>
+          `Record that ${n} was murdered?\n\n${n} will get a Slack DM saying they've been murdered and their vote no longer counts. They're taken out of any open or upcoming votes, and anyone who voted for them is asked to vote again.`,
+      });
+    }
   } else {
     list.push({ value: "restore", label: "Bring back into the game", confirm: (n) => `Bring ${n} back into the game?` });
     list.push({ value: m.role === "traitor" ? "role:faithful" : "role:traitor", label: m.role === "traitor" ? "Correct role: Faithful" : "Correct role: Traitor" });
@@ -61,7 +68,8 @@ export function CastPanel({ cast, addable, ended, outLabels }: Props) {
     setBusy(key);
     setError(null);
     try {
-      await gameAction(body);
+      const { warning } = await gameAction(body);
+      if (warning) setError(warning);
       router.refresh();
       return true;
     } catch (e) {
@@ -81,7 +89,7 @@ export function CastPanel({ cast, addable, ended, outLabels }: Props) {
   }
 
   return (
-    <section className="panel">
+    <section className="panel" id="cast">
       <div className="reveal-head">
         <h2 className="panel-title">The cast</h2>
         {!adding && !ended && (

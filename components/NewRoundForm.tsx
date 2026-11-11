@@ -40,22 +40,25 @@ export function NewRoundForm({
   lastRoundPlayerIds,
   banishedIds,
   preselectedIds = [],
+  defaults,
 }: {
   players: Player[];
   lastRoundPlayerIds: string[];
   banishedIds: string[];
   /** Ticked when the form opens (the players still in the game). */
   preselectedIds?: string[];
+  /** Pre-filled when setting up a scheduled banishment. */
+  defaults?: { title?: string; format?: "meeting" | "remote"; meetingDate?: string; scheduleId?: string };
 }) {
   const banished = new Set(banishedIds);
   const canPlay = (id: string) => !banished.has(id);
   const router = useRouter();
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(defaults?.title ?? "");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(() => new Set(preselectedIds.filter((id) => !banishedIds.includes(id))));
   const [openNow, setOpenNow] = useState(true);
   const [test, setTest] = useState(false);
-  const [format, setFormat] = useState<"meeting" | "remote">("meeting");
+  const [format, setFormat] = useState<"meeting" | "remote">(defaults?.format ?? "meeting");
   const [meetingAt, setMeetingAt] = useState("");
   // Times depend on the browser's clock and timezone, so fill them in after mount.
   const [opensAt, setOpensAt] = useState("");
@@ -64,7 +67,11 @@ export function NewRoundForm({
     setOpensAt(toLocalInput(new Date(Date.now() + 60 * 60 * 1000)));
     setClosesAt(toLocalInput(new Date(Date.now() + 30 * 60 * 1000)));
     const t = new Date();
-    setMeetingAt(toLocalInput(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10)));
+    setMeetingAt(
+      defaults?.meetingDate
+        ? `${defaults.meetingDate}T10:00`
+        : toLocalInput(new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1, 10)),
+    );
   }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +117,7 @@ export function NewRoundForm({
           test,
           format,
           meetingAt: meeting ? meetingDate.toISOString() : undefined,
+          scheduleId: defaults?.scheduleId,
         }),
       });
       const data = await res.json();

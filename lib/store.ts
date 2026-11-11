@@ -32,6 +32,8 @@ export type Round = {
   /** "remote" (default): vote in Slack over a window. "meeting": RSVP, then vote live in the meeting. */
   format?: "remote" | "meeting";
   meeting?: Meeting;
+  /** The schedule event this round was set up for. */
+  scheduleId?: string;
 };
 
 export type Meeting = {
@@ -60,6 +62,7 @@ export interface Store {
   /** Records a vote only if this voter hasn't voted in this round. Returns false if they already had. */
   castVote(roundId: string, vote: Vote): Promise<boolean>;
   getVotes(roundId: string): Promise<Vote[]>;
+  deleteVote(roundId: string, voterId: string): Promise<void>;
   /** Removes the round, its votes and the given extra keys. */
   deleteRound(id: string, extraKeys?: string[]): Promise<void>;
   getJSON<T>(key: string): Promise<T | null>;
@@ -103,6 +106,10 @@ class RedisStore implements Store {
   async getVotes(roundId: string) {
     const all = await this.redis.hgetall<Record<string, Vote>>(votesKey(roundId));
     return Object.values(all ?? {});
+  }
+
+  async deleteVote(roundId: string, voterId: string) {
+    await this.redis.hdel(votesKey(roundId), voterId);
   }
 
   async deleteRound(id: string, extraKeys: string[] = []) {
@@ -155,6 +162,9 @@ class MemoryStore implements Store {
   }
   async getVotes(roundId: string) {
     return [...(this.votes.get(roundId)?.values() ?? [])];
+  }
+  async deleteVote(roundId: string, voterId: string) {
+    this.votes.get(roundId)?.delete(voterId);
   }
   async deleteRound(id: string, extraKeys: string[] = []) {
     this.rounds.delete(id);

@@ -391,3 +391,18 @@ textarea {
 .tiles.small .tile-n { font-size: 22px; }
 .countdown { margin-top: 16px; padding: 16px; border-radius: 12px; border: 1px solid var(--crimson); background: var(--crimson-soft); text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .countdown-n { font-family: var(--font-display), Georgia, serif; font-size: 48px; line-height: 1; color: #fff; font-variant-numeric: tabular-nums; }
+
+/* To do */
+.todo-panel { margin-bottom: 24px; }
+.todos { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.todos li { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); }
+.todos li.overdue { border-color: rgba(210, 58, 48, 0.5); }
+.todos li.now { border-color: rgba(201, 163, 90, 0.45); }
+.todo-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.todo-body .muted { font-size: 13px; }
+.todo-badge { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted); white-space: nowrap; }
+.todo-badge.overdue { color: #f3a39c; border-color: rgba(210, 58, 48, 0.5); background: var(--crimson-soft); }
+.todo-badge.now { color: var(--gold); border-color: rgba(201, 163, 90, 0.45); background: var(--gold-soft); }
+@media (max-width: 560px) { .todos li { grid-template-columns: 1fr; } .todo-badge { justify-self: start; } }
+.set-up-link { color: var(--gold); font-size: 12.5px; text-decoration: none; }
+.set-up-link:hover { text-decoration: underline; }

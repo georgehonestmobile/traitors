@@ -62,6 +62,46 @@ export function voteMessage(round: Round, voter: Player): Message {
   };
 }
 
+/* ---------------- Leaving the game ---------------- */
+
+/** DM to a player the host has just marked as murdered. */
+export function murderedMessage(name: string, roundTitles: string[]): Message {
+  const rounds = roundTitles.length
+    ? ` That includes ${roundTitles.map((t) => `*${esc(t)}*`).join(", ")}.`
+    : "";
+  return {
+    text: "🔪 You have been murdered by the Traitors.",
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "🔪 You have been murdered", emoji: true } },
+      section(
+        `*${esc(name)}*, we're sorry to tell you that the Traitors have murdered you, so you're out of the game.\n\n` +
+          `As you're no longer playing, any vote you've made, or were due to make, no longer counts.${rounds}`,
+      ),
+      context("Thank you for playing."),
+    ],
+  };
+}
+
+/** Replaces an out player's ballot or RSVP in a round they can no longer take part in. */
+export function outOfRoundMessage(round: Round): Message {
+  return {
+    text: "You're no longer in the game.",
+    blocks: [section(`*${esc(round.title)}*\n\nYou're no longer in the game, so you won't be voting in this round.`)],
+  };
+}
+
+/** Sent to someone whose vote was for a player who has since been murdered. */
+export function revoteMessage(round: Round, voter: Player, outName: string): Message {
+  return {
+    text: `${outName} has been murdered, so your vote no longer counts. Please vote again.`,
+    blocks: [
+      section(`🔪 *${esc(round.title)}*\n\n*${esc(outName)}* has been murdered, so your vote for them no longer counts. Please vote again.`),
+      ballotBlock(round, voter),
+      context(round.format === "meeting" && round.meeting ? `Advance votes close when the meeting starts, ${slackDate(round.meeting.at)}.` : `Voting closes ${slackDate(round.closesAt)}.`),
+    ],
+  };
+}
+
 /* ---------------- Meeting banishments ---------------- */
 
 export const RSVP_YES = "rsvp_yes";
