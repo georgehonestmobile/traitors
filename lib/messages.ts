@@ -128,12 +128,13 @@ export function rsvpMessage(round: Round): Message {
     blocks: [
       { type: "header", text: { type: "plain_text", text: "🕯️ A banishment meeting is coming", emoji: true } },
       section(
-        `*${esc(round.title)}* takes place *${slackDate(m.at)}*.
-
-Will you be there? Please reply by *${slackDate(m.rsvpClosesAt)}*.`,
+        `*${esc(round.title)}* takes place *${slackDate(m.at)}*.\n\n` +
+          `Will you be there? Please reply by *${slackDate(m.rsvpClosesAt)}*.\n\n` +
+          "It's completely fine if you can't make it, whether you're busy, not working that day or anything else. " +
+          "Just let us know, and you can vote in advance instead so your vote still counts.",
       ),
       rsvpButtons(round, ["yes", "no"]),
-      context("If you'll be there, your ballot arrives during the meeting. If you can't make it, you'll vote in advance."),
+      context("If you'll be there, your ballot arrives during the meeting. If you can't make it, you'll get your ballot as soon as you reply."),
     ],
   };
 }
@@ -157,7 +158,7 @@ See you at the meeting, *${slackDate(m.at)}*. Your ballot will arrive here durin
     blocks: [
       section(`❌ *${esc(round.title)}*
 
-Thanks for letting us know. As you can't be at the meeting, please nominate who you believe is a *Traitor* now. Your vote will be read out at the meeting.`),
+No problem, thanks for letting us know. As you can't be at the meeting, please nominate who you believe is a *Traitor* now. Your vote counts just the same, and will be read out at the meeting.`),
       ballotBlock(round, voter),
       context(`Advance votes close when the meeting starts, ${slackDate(m.at)}.`),
       ...(canChange ? [rsvpButtons(round, ["yes"])] : []),
