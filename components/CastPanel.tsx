@@ -33,7 +33,7 @@ function actionsFor(m: CastMember): Action[] {
         value: "murder",
         label: "Murder",
         confirm: (n) =>
-          `Record that ${n} was murdered?\n\n${n} will get a Slack DM saying they've been murdered and their vote no longer counts. They're taken out of any open or upcoming votes, and anyone who voted for them is asked to vote again.`,
+          `Record that ${n} was murdered?\n\nThe bot won't DM ${n}: announce it in the channel as usual. Their vote no longer counts. They're taken out of any open or upcoming votes, and anyone who voted for them is asked to vote again.`,
       });
     }
   } else {

@@ -82,7 +82,7 @@ export function buildTodos(args: {
     todos.push({
       id: `murder:${r.id}`,
       title: `Record the ${formatDay(r.date)} murder`,
-      detail: "Mark the murdered player in the cast. They'll get a DM, and any vote of theirs stops counting.",
+      detail: "Mark the murdered player in the cast, so any vote of theirs stops counting and anyone who voted for them is asked to vote again.",
       urgency: r.status === "overdue" ? "overdue" : "now",
       href: "#cast",
       action: "Go to the cast",

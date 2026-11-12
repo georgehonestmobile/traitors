@@ -62,9 +62,3 @@ export async function removeFromOpenRounds(
   }
   return rounds.map((r) => r.title);
 }
-
-/** Tell a murdered player they're out, and that their votes no longer count. */
-export async function notifyMurdered(player: { id: string; name: string }, roundTitles: string[]) {
-  const channel = await slack.openDm(player.id);
-  await slack.postMessage(channel, msg.murderedMessage(player.name, roundTitles));
-}

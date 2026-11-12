@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
-import { notifyMurdered, removeFromOpenRounds } from "@/lib/departure";
+import { removeFromOpenRounds } from "@/lib/departure";
 import * as games from "@/lib/game";
 import { listPlayers } from "@/lib/slack";
 
@@ -60,18 +60,13 @@ export async function POST(req: Request) {
         const m = updated.cast.find((c) => c.playerId === playerId)!;
         const player = { id: m.playerId, name: m.name };
         // The murder is recorded; problems after this are reported as warnings, not errors.
+        // No DM to the murdered player: the murder is announced in the channel.
         let warning: string | undefined;
-        let affected: string[] = [];
         try {
-          affected = await removeFromOpenRounds(game.id, player);
+          await removeFromOpenRounds(game.id, player);
         } catch (e) {
           console.error(e);
           warning = `Recorded, but ${m.name} couldn't be taken out of open votes: ${e instanceof Error ? e.message : e}`;
-        }
-        try {
-          await notifyMurdered(player, affected);
-        } catch (e) {
-          warning = `${warning ? `${warning} ` : "Recorded, but "}the Slack DM to ${m.name} failed: ${e instanceof Error ? e.message : e}`;
         }
         return NextResponse.json({ ok: true, ...(warning ? { warning } : {}) });
       }

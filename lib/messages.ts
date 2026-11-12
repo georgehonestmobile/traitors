@@ -64,24 +64,6 @@ export function voteMessage(round: Round, voter: Player): Message {
 
 /* ---------------- Leaving the game ---------------- */
 
-/** DM to a player the host has just marked as murdered. */
-export function murderedMessage(name: string, roundTitles: string[]): Message {
-  const rounds = roundTitles.length
-    ? ` That includes ${roundTitles.map((t) => `*${esc(t)}*`).join(", ")}.`
-    : "";
-  return {
-    text: "🔪 You have been murdered by the Traitors.",
-    blocks: [
-      { type: "header", text: { type: "plain_text", text: "🔪 You have been murdered", emoji: true } },
-      section(
-        `*${esc(name)}*, we're sorry to tell you that the Traitors have murdered you, so you're out of the game.\n\n` +
-          `As you're no longer playing, any vote you've made, or were due to make, no longer counts.${rounds}`,
-      ),
-      context("Thank you for playing."),
-    ],
-  };
-}
-
 /** Replaces an out player's ballot or RSVP in a round they can no longer take part in. */
 export function outOfRoundMessage(round: Round): Message {
   return {
