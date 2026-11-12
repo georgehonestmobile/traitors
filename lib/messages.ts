@@ -90,6 +90,17 @@ export function outOfRoundMessage(round: Round): Message {
   };
 }
 
+/** They picked someone from an older ballot who has since left the game. */
+export function targetGoneMessage(round: Round, voter: Player): Message {
+  return {
+    text: "That player is no longer in the game. Please choose someone else.",
+    blocks: [
+      section(`*${esc(round.title)}*\n\nThe player you picked is no longer in the game, so that vote can't count. Please choose someone else.`),
+      ballotBlock(round, voter),
+    ],
+  };
+}
+
 /** Sent to someone whose vote was for a player who has since been murdered. */
 export function revoteMessage(round: Round, voter: Player, outName: string): Message {
   return {

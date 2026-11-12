@@ -257,7 +257,11 @@ export async function castVote(args: { roundId: string; voterId: string; targetI
   if (status === "closed") return result("closed", msg.closedMessage(round, { voted: !!existing }));
 
   const target = round.players.find((p) => p.id === args.targetId);
-  if (!target) return result("ineligible", msg.notEligibleMessage());
+  // Picked from an older ballot someone who has since been murdered or banished.
+  if (!target) {
+    if (existing) return result("already", msg.alreadyVotedMessage(round, round.players.find((p) => p.id === existing.targetId)));
+    return result("ineligible", msg.targetGoneMessage(round, voter));
+  }
 
   if (existing) {
     return result("already", msg.alreadyVotedMessage(round, round.players.find((p) => p.id === existing.targetId)));
