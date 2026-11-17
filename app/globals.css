@@ -416,3 +416,8 @@ select.attendance.unset { color: var(--faint); }
 .paper-names .chip { font-size: 14px; padding: 7px 12px; }
 .paper-names .faint-chip { border-style: dashed; }
 .tiles.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+select.paper-select { width: auto; max-width: 100%; padding: 4px 6px; font-size: 12.5px; border-color: var(--gold); }
+select.paper-select.set { color: var(--ok); border-color: var(--border-strong); }
+.paper-status { margin: 10px 0 0; font-size: 13.5px; color: var(--ok); }
+.paper-status.pending { color: var(--faint); }
+.script-card.clarify { margin-top: 12px; border-color: var(--gold); }

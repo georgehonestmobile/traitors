@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
-import { getRsvps } from "@/lib/meeting";
-import { getReveal, getRevealDefaults, toView } from "@/lib/reveal";
+import { getPaperVotes, getRsvps } from "@/lib/meeting";
+import { getReveal, getRevealDefaults, paperSettled, toView } from "@/lib/reveal";
 import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
 import { getStore, joinLocksAt } from "@/lib/store";
@@ -11,6 +11,7 @@ import { AttendanceSelect } from "@/components/AttendanceSelect";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
 import { MeetingPanel } from "@/components/MeetingPanel";
+import { PaperVoteSelect } from "@/components/PaperVoteSelect";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
 import { TestVotePanel } from "@/components/TestVotePanel";
@@ -49,14 +50,24 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const isAdvance = (at: string) => Date.parse(at) < requestedAt;
   const advanceVotes = votes.filter((v) => isAdvance(v.at)).length;
   const paperVotes = votes.filter((v) => v.via === "paper");
-  const paperIds = new Set(paperVotes.map((v) => v.voterId));
   const officeIds = round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && rsvps[pl.id].join === "office").map((pl) => pl.id);
+  // Office paper votes, entered here as each paper is revealed (by whoever is helping the host).
+  const paper = m?.requestedAt ? await getPaperVotes(id) : {};
+  const paperEntries = Object.fromEntries(Object.entries(paper).map(([k, e]) => [k, e.targetId]));
+  const slackVoted = new Set(votes.filter((v) => v.via !== "paper").map((v) => v.voterId));
+  /** Who can have a paper vote entered: in the script's order once it has started, else the office (or anyone who hasn't voted). */
+  const canPaper = (pid: string) =>
+    !!m?.requestedAt && !slackVoted.has(pid) && (reveal?.paperIds ? reveal.paperIds.includes(pid) : !reveal && (officeIds.includes(pid) || pid in paper || status === "closed"));
+  const paperLocked = !!reveal && paperSettled(reveal);
+  const playerOptions = round.players.map((pl) => ({ id: pl.id, name: pl.name }));
   const voting = !!m?.requestedAt && !m.finishedAt;
   const closedAt = round.closedEarlyAt && Date.parse(round.closedEarlyAt) < Date.parse(round.closesAt) ? round.closedEarlyAt : round.closesAt;
 
   return (
     <div className="shell">
       {(status === "open" || status === "scheduled" || voting) && <AutoRefresh seconds={voting ? 2 : 5} />}
+      {/* Meeting reveals may be run by two people at once: keep both screens up to date. */}
+      {!voting && ((m && status === "closed" && !reveal) || (reveal?.mode === "in-person" && reveal.status !== "done")) && <AutoRefresh seconds={2} />}
       <TopBar />
       <Link href="/" className="back">← All rounds</Link>
 
@@ -131,8 +142,13 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                     </td>
                     )}
                     <td>
-                      {at ? <span className="okc">✓ Voted <span className="muted">{m && paperIds.has(p.id) ? "on paper" : m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
-                        : m?.requestedAt && officeIds.includes(p.id) ? <span className="muted">On paper, revealed in the script</span>
+                      {canPaper(p.id) ? (
+                        paperLocked ? (
+                          <span className="okc">📝 {p.id in paper ? (paper[p.id].targetId ? round.players.find((x) => x.id === paper[p.id].targetId)?.name : "Blank") : "—"}</span>
+                        ) : (
+                          <PaperVoteSelect roundId={round.id} voterId={p.id} targetId={p.id in paper ? paper[p.id].targetId : undefined} players={playerOptions} />
+                        )
+                      ) : at ? <span className="okc">✓ Voted <span className="muted">{m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
                     </td>
                   </tr>
@@ -192,7 +208,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
             channels={channels}
             channelsError={channelsError}
             defaults={m ? { ...revealDefaults, mode: "in-person" } : revealDefaults}
-            initialView={toView(reveal, round)}
+            initialView={toView(reveal, round, paperEntries)}
           />
         </div>
       </div>

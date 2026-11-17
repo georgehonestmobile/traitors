@@ -30,8 +30,10 @@ When you call a vote, choose a format:
 4. **In the meeting**, press **⏱️ Request votes (1 minute)** on the round page. Everyone who hasn't voted, **except the office**, gets a ballot in Slack with one minute to vote. The page shows a countdown and votes coming in; you can end it early. Ballots not used in time switch to "Time's up" and don't count. The office votes on paper at the same time.
 5. Run the **face-to-face script** once the Slack minute is over. It sets the whole running order up front: advance and Slack votes ordered for suspense, with the office spread through it (one of them makes the final call), so the result stays in doubt.
    - **Slack and advance votes:** it shows who to call on and what they voted, so you can call out a different answer, and marks advance votes for you to read out.
-   - **The office:** when it calls on someone in the office, they reveal their paper and you tap that name on the card (or **Blank / no vote**). The count updates, and you can't move on until it's entered. Go **Back** to correct one.
-   - Once the last paper is in, it works out the result, including any tiebreak or straw draw, and carries on to the verdict.
+   - **The office:** when it calls on someone in the office, they reveal their paper. Enter the name in the round page's **Players** list (the **📝 Paper vote…** dropdown, or **Blank / no vote**). The script card shows whether it's been entered, and the count updates.
+   - **Two people:** one can read the script while another enters paper votes, each on their own screen with the same login. Both screens update every couple of seconds.
+   - **The verdict waits for every paper vote.** If any are missing when you press Next on the last vote, the script asks the room to confirm them (and lets you enter them there). Once they're all in, it works out the result, including any tiebreak or straw draw, and carries on. To correct a paper vote after that, go **Back** to the votes and change it.
+   - Paper votes can also be entered before starting the script, once votes have been requested.
 
 **💬 Remote (Slack)**: players vote in Slack over a window you set. Afterwards, run the reveal in a Slack channel to announce the results (or face to face).
 

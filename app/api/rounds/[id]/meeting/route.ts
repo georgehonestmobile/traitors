@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
-import { askHowJoining, finishMeetingVote, requestVotes, setAttendance } from "@/lib/meeting";
+import { askHowJoining, enterPaperVote, finishMeetingVote, requestVotes, setAttendance } from "@/lib/meeting";
 import { RoundError } from "@/lib/rounds";
 
 /**
@@ -8,6 +8,7 @@ import { RoundError } from "@/lib/rounds";
  *   request | finish | end-now      the one-minute vote
  *   ask-join                        DM attendees who haven't said whether they're in the office or dialling in
  *   attendance { playerId, join }   the host sets how someone is joining ("office" | "dial-in")
+ *   paper { voterId, targetId }     an office paper vote (targetId null: blank or spoilt)
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -21,6 +22,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     else if (body.action === "attendance") {
       if (body.join !== "office" && body.join !== "dial-in") return NextResponse.json({ error: "Choose office or dialling in." }, { status: 400 });
       await setAttendance(id, String(body.playerId ?? ""), body.join);
+    } else if (body.action === "paper") {
+      await enterPaperVote(id, String(body.voterId ?? ""), body.targetId ? String(body.targetId) : null);
     } else return NextResponse.json({ error: "Unknown action." }, { status: 400 });
     return NextResponse.json({ ok: true });
   } catch (e) {

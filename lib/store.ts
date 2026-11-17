@@ -65,6 +65,14 @@ export type Rsvp = {
 };
 export const rsvpKey = (roundId: string) => `rsvp:${roundId}`;
 
+/**
+ * Meeting banishments: the office's paper votes, entered by the host as each paper is revealed.
+ * Kept apart from the reveal's state so one person can enter them while another runs the script.
+ * `targetId` null: a blank or spoilt paper.
+ */
+export type PaperEntry = { targetId: string | null; at: string };
+export const paperKey = (roundId: string) => `paper:${roundId}`;
+
 /** Attendees can switch between the office and dialling in until an hour before the meeting. */
 export const JOIN_LOCK_MS = 60 * 60 * 1000;
 export const joinLocksAt = (m: Meeting) => new Date(Date.parse(m.at) - JOIN_LOCK_MS).toISOString();

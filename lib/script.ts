@@ -32,12 +32,11 @@ export type ScriptCard = {
   note?: string;
   /** The count after this beat. */
   tally?: { name: string; count: number }[];
-  /** Office voters: the host enters the name on their paper as they reveal it. */
+  /** Office voters: their paper vote, entered on the round page as they reveal it. */
   paper?: {
     voterId: string;
     /** The name entered: a player id, null for a blank or spoilt paper, or undefined if not entered yet. */
     targetId?: string | null;
-    options: { id: string; name: string }[];
   };
 };
 
@@ -124,7 +123,7 @@ export function scriptCard(
             : []),
         ],
         note: beats.some((b) => b.kind === "vote" && b.paper)
-          ? "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible. For the office, enter the name on each paper as it's revealed."
+          ? "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible. Office votes are entered in the Players list as each paper is revealed."
           : "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible.",
       };
     }
@@ -152,21 +151,12 @@ export function scriptCard(
           kind: beat.kind,
           heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""} · on paper`,
           call: name(beat.voterId),
-          ...(entered ? { expect: name(entered), expectLabel: "Their paper says" } : {}),
+          ...(entered ? { expect: name(entered) } : {}),
           say: last
             ? [`And the final vote… ${name(beat.voterId)}, please reveal your paper.`]
             : [`${name(beat.voterId)}, please reveal your paper. Who did you vote for?`],
-          note: !known
-            ? "Tap the name on their paper. The count updates once it's in."
-            : entered === null
-              ? "Blank or spoilt paper: no vote. Tap a name to change it."
-              : "Entered from their paper. Tap another name to change it.",
           tally: tally(order, beat.n, name),
-          paper: {
-            voterId: beat.voterId,
-            ...(known ? { targetId: entered } : {}),
-            options: round.players.map((p) => ({ id: p.id, name: p.name })),
-          },
+          paper: { voterId: beat.voterId, ...(known ? { targetId: entered } : {}) },
         };
       }
       return {

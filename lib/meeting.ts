@@ -1,7 +1,8 @@
 import * as msg from "./messages";
 import { MEETING_VOTE_MS, RoundError, roundStatus } from "./rounds";
 import * as slack from "./slack";
-import { getStore, joinLocksAt, rsvpKey, type JoinMode, type Round, type Rsvp } from "./store";
+import { getReveal, paperSettled } from "./reveal";
+import { getStore, joinLocksAt, paperKey, rsvpKey, type JoinMode, type PaperEntry, type Round, type Rsvp } from "./store";
 
 /**
  * Meeting banishments:
@@ -11,8 +12,8 @@ import { getStore, joinLocksAt, rsvpKey, type JoinMode, type Round, type Rsvp } 
  *  3. In the meeting, the host requests votes: everyone who hasn't voted, except those in the office,
  *     gets a ballot with one minute to vote. Votes not made in time don't count.
  *  4. The office votes on paper.
- *  5. The host runs the face-to-face script. Office voters reveal their paper when called on, and the
- *     host enters each name as it's revealed.
+ *  5. The host runs the face-to-face script. Office voters reveal their paper when called on, and
+ *     whoever is helping enters each name on the round page as it's revealed.
  */
 
 const GRACE_MS = 3 * 1000;
@@ -125,6 +126,40 @@ export async function setAttendance(roundId: string, playerId: string, join: Joi
     joinAt: at,
     byHost: true,
   } satisfies Rsvp);
+}
+
+/**
+ * The office's paper votes, entered on the round page as each paper is revealed (or before the
+ * script, if collected up front). `targetId` null: a blank or spoilt paper.
+ */
+export async function enterPaperVote(roundId: string, voterId: string, targetId: string | null) {
+  const store = getStore();
+  const round = await load(roundId);
+  if (!round.meeting!.requestedAt) throw new RoundError("Request votes first.");
+  const voter = round.players.find((p) => p.id === voterId);
+  if (!voter) throw new RoundError("That player isn't in this round.");
+  if (targetId && !round.players.some((p) => p.id === targetId)) throw new RoundError("That player isn't in this round.");
+  const existing = (await store.getVotes(roundId)).find((v) => v.voterId === voterId);
+  if (existing && existing.via !== "paper") throw new RoundError(`${voter.name} has already voted on Slack.`);
+
+  const reveal = await getReveal(roundId);
+  if (reveal) {
+    if (!reveal.paperIds?.includes(voterId)) {
+      throw new RoundError(`${voter.name} isn't in the script's running order. Reset the reveal to include them.`);
+    }
+    if (paperSettled(reveal)) {
+      throw new RoundError("The script has moved past the votes. Go back in the script to change a paper vote.");
+    }
+  }
+
+  await store.setField(paperKey(roundId), voterId, { targetId, at: new Date().toISOString() } satisfies PaperEntry);
+  // Keep the round's record of votes in step.
+  if (existing) await store.deleteVote(roundId, voterId);
+  if (targetId) await store.castVote(roundId, { voterId, targetId, at: new Date().toISOString(), via: "paper" });
+}
+
+export async function getPaperVotes(roundId: string) {
+  return getStore().getFields<PaperEntry>(paperKey(roundId));
 }
 
 /** In the meeting: open the one-minute vote and DM a ballot to everyone who hasn't voted. */

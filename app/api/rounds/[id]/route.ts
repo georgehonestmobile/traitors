@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { revealKey } from "@/lib/reveal";
 import { cancelRound, roundStatus } from "@/lib/rounds";
-import { getStore } from "@/lib/store";
+import { getStore, paperKey, rsvpKey } from "@/lib/store";
 
 /** Delete a round. An active real round is cancelled first, so scheduled DMs are withdrawn. */
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -19,6 +19,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       console.error(e);
     }
   }
-  await store.deleteRound(id, [revealKey(id)]);
+  await store.deleteRound(id, [revealKey(id), rsvpKey(id), paperKey(id)]);
   return NextResponse.json({ ok: true });
 }

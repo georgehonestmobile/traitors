@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RevealMode, RevealSettings, RevealView } from "@/lib/reveal";
+import { meetingAction } from "./meetingApi";
 import { ScriptPanel } from "./ScriptPanel";
 import type { RoundStatus } from "@/lib/rounds";
 import type { Channel } from "@/lib/slack";
@@ -63,6 +64,33 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
       setBusy(false);
     }
   }
+
+  /** Office paper votes go to the meeting API; then fetch the updated script. */
+  async function enterPaper(voterId: string, targetId: string | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      await meetingAction(roundId, { action: "paper", voterId, targetId });
+      setView(await act("step"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Two people may run a face-to-face reveal (one reading the script, one entering paper votes).
+  // The page refreshes every couple of seconds; take the other person's changes from it.
+  const lastProp = useRef(JSON.stringify(initialView));
+  useEffect(() => {
+    const json = JSON.stringify(initialView);
+    if (json === lastProp.current) return;
+    if (busy || Date.now() - receivedAt.current < 1500) return; // our own change is newer; take the next refresh
+    lastProp.current = json;
+    if (initialView?.mode === "slack" && view?.mode === "slack") return; // Slack reveals drive themselves
+    setView(initialView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialView]);
 
   // Drive the reveal: whenever a step is due, ask the server to post it.
   useEffect(() => {
@@ -210,7 +238,7 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
         busy={busy}
         error={error}
         onAction={(a) => run(a)}
-        onPaper={(voterId, targetId) => run("paper", { voterId, targetId })}
+        onPaper={(voterId, targetId) => enterPaper(voterId, targetId)}
       />
     );
   }
