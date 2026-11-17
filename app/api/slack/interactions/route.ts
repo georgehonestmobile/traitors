@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { recordRsvp } from "@/lib/meeting";
+import { recordRsvp, type RsvpChoice } from "@/lib/meeting";
 import { castVote } from "@/lib/rounds";
-import { roundIdFromBlockId, roundIdFromRsvpBlockId, RSVP_NO, RSVP_YES, VOTE_ACTION_ID } from "@/lib/messages";
+import { roundIdFromBlockId, roundIdFromRsvpBlockId, RSVP_DIAL_IN, RSVP_NO, RSVP_OFFICE, RSVP_YES, VOTE_ACTION_ID } from "@/lib/messages";
 import { respond, verifySlackRequest } from "@/lib/slack";
 
 /**
  * Slack "Interactivity" request URL. Slack calls this when a player picks someone
  * from a ballot in their DM, or answers a meeting RSVP.
  */
+const RSVP_CHOICES: Record<string, RsvpChoice> = {
+  [RSVP_YES]: "yes",
+  [RSVP_NO]: "no",
+  [RSVP_OFFICE]: "office",
+  [RSVP_DIAL_IN]: "dial-in",
+};
+
 export async function POST(req: Request) {
   const raw = await req.text();
   const ok = verifySlackRequest(
@@ -28,10 +35,10 @@ export async function POST(req: Request) {
       if (!roundId || !targetId) continue;
       const { message } = await castVote({ roundId, voterId: userId, targetId });
       if (payload.response_url) await respond(payload.response_url, message);
-    } else if (action.action_id === RSVP_YES || action.action_id === RSVP_NO) {
+    } else if (Object.hasOwn(RSVP_CHOICES, action.action_id)) {
       const roundId = roundIdFromRsvpBlockId(action.block_id ?? "");
       if (!roundId) continue;
-      const message = await recordRsvp(roundId, userId, action.action_id === RSVP_YES ? "yes" : "no");
+      const message = await recordRsvp(roundId, userId, RSVP_CHOICES[action.action_id]);
       if (payload.response_url) await respond(payload.response_url, message);
     }
   }

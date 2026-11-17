@@ -406,3 +406,11 @@ textarea {
 @media (max-width: 560px) { .todos li { grid-template-columns: 1fr; } .todo-badge { justify-self: start; } }
 .set-up-link { color: var(--gold); font-size: 12.5px; text-decoration: none; }
 .set-up-link:hover { text-decoration: underline; }
+
+/* Meeting attendance and paper votes */
+select.attendance { width: auto; padding: 4px 6px; font-size: 12.5px; }
+select.attendance.office, select.attendance.dial-in { color: var(--ok); }
+select.attendance.unset { color: var(--faint); }
+.paper-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.paper-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.tiles.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }

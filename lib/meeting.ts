@@ -1,15 +1,18 @@
 import * as msg from "./messages";
 import { MEETING_VOTE_MS, RoundError, roundStatus } from "./rounds";
 import * as slack from "./slack";
-import { getStore, rsvpKey, type Round, type Rsvp } from "./store";
+import { getReveal } from "./reveal";
+import { getStore, joinLocksAt, rsvpKey, type JoinMode, type Round, type Rsvp } from "./store";
 
 /**
  * Meeting banishments:
- *  1. The day before (9am), each player is asked whether they'll be at the meeting (reply by 5pm).
- *  2. "No" replies get a ballot straight away: an advance vote, read out by the host.
- *  3. In the meeting, the host requests votes: everyone who hasn't voted gets a ballot with one minute
- *     to vote. Votes not made in time don't count.
- *  4. The host runs the face-to-face script.
+ *  1. The day before (9am), each player is asked whether they'll be at the meeting, in the office or
+ *     dialling in (reply by 5pm). Attendees can switch between the two until an hour before.
+ *  2. "Can't make it" replies get a ballot straight away: an advance vote, read out by the host.
+ *  3. In the meeting, the host requests votes: everyone who hasn't voted, except those in the office,
+ *     gets a ballot with one minute to vote. Votes not made in time don't count.
+ *  4. The office votes on paper, and the host enters those votes.
+ *  5. The host runs the face-to-face script.
  */
 
 const GRACE_MS = 3 * 1000;
@@ -25,8 +28,12 @@ async function load(id: string) {
   return round;
 }
 
-/** A player answered the RSVP. Returns the message to replace their DM with. */
-export async function recordRsvp(roundId: string, voterId: string, answer: "yes" | "no") {
+export type RsvpChoice = "yes" | "no" | JoinMode;
+
+const lockLabel = (iso: string) => `<!date^${Math.floor(Date.parse(iso) / 1000)}^{time}|${new Date(iso).toUTCString()}>`;
+
+/** A player answered the RSVP (or switched between the office and dialling in). Returns the message to replace their DM with. */
+export async function recordRsvp(roundId: string, voterId: string, choice: RsvpChoice) {
   const store = getStore();
   const round = await store.getRound(roundId);
   if (!round?.meeting) return msg.notEligibleMessage();
@@ -36,13 +43,113 @@ export async function recordRsvp(roundId: string, voterId: string, answer: "yes"
 
   const m = round.meeting;
   const now = Date.now();
-  if (m.requestedAt || now > Date.parse(m.rsvpClosesAt) + GRACE_MS) return msg.rsvpClosedMessage(round);
+  const current = (await getRsvps(roundId))[voterId];
+  // Coming or not: until 5pm the day before. Office or dialling in: until an hour before the meeting.
+  const answerOpen = !m.requestedAt && now <= Date.parse(m.rsvpClosesAt) + GRACE_MS;
+  const joinOpen = !m.requestedAt && now <= Date.parse(joinLocksAt(m)) + GRACE_MS;
+  const can = { answer: !m.requestedAt && now < Date.parse(m.rsvpClosesAt), join: !m.requestedAt && now < Date.parse(joinLocksAt(m)) };
+
+  const answer = choice === "no" ? "no" : "yes";
+  const join = choice === "office" || choice === "dial-in" ? choice : current?.answer === "yes" ? current.join : undefined;
+  const switchingJoin = current?.answer === "yes" && answer === "yes";
+
+  if (switchingJoin ? !joinOpen : !answerOpen) {
+    if (current?.answer === "yes") {
+      const notice = !joinOpen
+        ? `This was locked in at ${lockLabel(joinLocksAt(m))}. If something's changed, let the host know.`
+        : `Replies closed ${lockLabel(m.rsvpClosesAt)}, so you can't switch to voting in advance now. If you can't make it, let the host know.`;
+      return msg.rsvpAnsweredMessage(round, voter, current, can, notice);
+    }
+    return msg.rsvpClosedMessage(round);
+  }
 
   const voted = (await store.getVotes(roundId)).find((v) => v.voterId === voterId);
   if (voted) return msg.alreadyVotedMessage(round, round.players.find((p) => p.id === voted.targetId));
 
-  await store.setField(rsvpKey(roundId), voterId, { answer, at: new Date(now).toISOString() } satisfies Rsvp);
-  return msg.rsvpAnsweredMessage(round, voter, answer, now < Date.parse(m.rsvpClosesAt));
+  const at = new Date(now).toISOString();
+  const rsvp: Rsvp = {
+    answer,
+    at: switchingJoin ? current.at : at,
+    ...(answer === "yes" && join ? { join, joinAt: join === current?.join ? current.joinAt ?? at : at } : {}),
+  };
+  await store.setField(rsvpKey(roundId), voterId, rsvp);
+  return msg.rsvpAnsweredMessage(round, voter, rsvp, can);
+}
+
+/** Attendees who said they'd come but not how (they replied before the office/dial-in choice existed). */
+export async function undecidedAttendees(round: Round) {
+  const rsvps = await getRsvps(round.id);
+  return round.players.filter((p) => rsvps[p.id]?.answer === "yes" && !rsvps[p.id].join);
+}
+
+/** DM attendees who haven't said whether they're in the office or dialling in. Returns how many were asked. */
+export async function askHowJoining(roundId: string) {
+  const store = getStore();
+  const round = await load(roundId);
+  const m = round.meeting!;
+  if (m.requestedAt) throw new RoundError("Votes have already been requested.");
+  if (Date.now() >= Date.parse(joinLocksAt(m))) throw new RoundError("It's less than an hour until the meeting, so choices are locked.");
+  const who = await undecidedAttendees(round);
+  if (!who.length) throw new RoundError("Everyone coming has already said how they're joining.");
+  const failed: string[] = [];
+  if (!round.test) {
+    await Promise.all(
+      who.map(async (p) => {
+        try {
+          const channel = round.delivery[p.id]?.channel ?? (await slack.openDm(p.id));
+          await slack.postMessage(channel, msg.joinQuestionMessage(round));
+        } catch (e) {
+          console.error(e);
+          failed.push(p.name);
+        }
+      }),
+    );
+  }
+  m.joinAskedAt = new Date().toISOString();
+  await store.saveRound(round);
+  return { asked: who.length - failed.length, failed };
+}
+
+/** The host sets how someone is joining (e.g. they told the host in person). Until votes are requested. */
+export async function setAttendance(roundId: string, playerId: string, join: JoinMode) {
+  const store = getStore();
+  const round = await load(roundId);
+  if (round.meeting!.requestedAt) throw new RoundError("Votes have already been requested.");
+  if (!round.players.some((p) => p.id === playerId)) throw new RoundError("That player isn't in this round.");
+  const current = (await getRsvps(roundId))[playerId];
+  const at = new Date().toISOString();
+  await store.setField(rsvpKey(roundId), playerId, {
+    answer: "yes",
+    at: current?.answer === "yes" ? current.at : at,
+    join,
+    joinAt: at,
+    byHost: true,
+  } satisfies Rsvp);
+}
+
+/** Paper votes from the office, entered by the host once votes have been requested and before the reveal. */
+async function paperGate(roundId: string) {
+  const round = await load(roundId);
+  if (!round.meeting!.requestedAt) throw new RoundError("Request votes first.");
+  if (await getReveal(roundId)) throw new RoundError("The reveal has started. Reset it to change votes.");
+  return round;
+}
+
+export async function recordPaperVote(roundId: string, voterId: string, targetId: string) {
+  const round = await paperGate(roundId);
+  const voter = round.players.find((p) => p.id === voterId);
+  const target = round.players.find((p) => p.id === targetId);
+  if (!voter || !target) throw new RoundError("Both players must be in this round.");
+  const ok = await getStore().castVote(roundId, { voterId, targetId, at: new Date().toISOString(), via: "paper" });
+  if (!ok) throw new RoundError(`${voter.name} has already voted.`);
+}
+
+export async function removePaperVote(roundId: string, voterId: string) {
+  await paperGate(roundId);
+  const vote = (await getStore().getVotes(roundId)).find((v) => v.voterId === voterId);
+  if (!vote) throw new RoundError("No vote to remove.");
+  if (vote.via !== "paper") throw new RoundError("Only paper votes can be removed here.");
+  await getStore().deleteVote(roundId, voterId);
 }
 
 /** In the meeting: open the one-minute vote and DM a ballot to everyone who hasn't voted. */
@@ -62,8 +169,10 @@ export async function requestVotes(roundId: string): Promise<Round> {
   await store.saveRound(round); // open the window before any ballot arrives
   if (round.test) return round;
 
-  const voted = new Set((await store.getVotes(roundId)).map((v) => v.voterId));
-  const recipients = round.players.filter((p) => !voted.has(p.id));
+  // Everyone who hasn't voted, except the office (they vote on paper).
+  const [votes, rsvps] = await Promise.all([store.getVotes(roundId), getRsvps(roundId)]);
+  const voted = new Set(votes.map((v) => v.voterId));
+  const recipients = round.players.filter((p) => !voted.has(p.id) && rsvps[p.id]?.join !== "office");
   await Promise.all(
     recipients.map(async (p) => {
       const b: { channel?: string; ts?: string; error?: string } = {};

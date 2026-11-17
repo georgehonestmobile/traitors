@@ -31,7 +31,7 @@ function Card({ card }: { card: ScriptCard }) {
       )}
       {card.expect && (
         <div className="script-expect">
-          <span>Recorded vote <em>(host only)</em></span>
+          <span>{card.expectLabel ?? "Recorded vote"} <em>(host only)</em></span>
           <strong>{card.expect}</strong>
         </div>
       )}

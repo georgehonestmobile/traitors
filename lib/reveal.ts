@@ -404,6 +404,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   // Meeting banishments: votes made before the host requested votes were cast in advance.
   const requested = round.meeting?.requestedAt ? Date.parse(round.meeting.requestedAt) : Infinity;
   const advance = round.format === "meeting" ? recorded.filter((v) => Date.parse(v.at) < requested).map((v) => v.voterId) : [];
+  const paper = recorded.filter((v) => v.via === "paper").map((v) => v.voterId);
   const order = suspensefulOrder(cast);
   const outcome = resolveOutcome(order);
 
@@ -411,7 +412,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   const state: RevealState = {
     roundId,
     runId: crypto.randomUUID().slice(0, 8),
-    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome, advance) } : {}),
+    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome, advance, paper) } : {}),
     channel: inPerson ? "" : settings.channel,
     channelName: inPerson ? "" : settings.channelName,
     standingsEvery,

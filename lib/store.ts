@@ -47,12 +47,35 @@ export type Meeting = {
   /** The in-meeting ballot DMs, by player. */
   ballots?: Record<string, { channel?: string; ts?: string; error?: string }>;
   finishedAt?: string;
+  /** When the host last asked attendees whether they're in the office or dialling in. */
+  joinAskedAt?: string;
 };
 
-export type Rsvp = { answer: "yes" | "no"; at: string };
+/** How an attendee joins the meeting: in the office (votes on paper) or dialling in (votes in Slack). */
+export type JoinMode = "office" | "dial-in";
+
+export type Rsvp = {
+  answer: "yes" | "no";
+  at: string;
+  /** For "yes": how they're joining. Can change until an hour before the meeting. */
+  join?: JoinMode;
+  joinAt?: string;
+  /** Set when the host changed it on the round page. */
+  byHost?: boolean;
+};
 export const rsvpKey = (roundId: string) => `rsvp:${roundId}`;
 
-export type Vote = { voterId: string; targetId: string; at: string };
+/** Attendees can switch between the office and dialling in until an hour before the meeting. */
+export const JOIN_LOCK_MS = 60 * 60 * 1000;
+export const joinLocksAt = (m: Meeting) => new Date(Date.parse(m.at) - JOIN_LOCK_MS).toISOString();
+
+export type Vote = {
+  voterId: string;
+  targetId: string;
+  at: string;
+  /** Meeting banishments: a paper vote from the office, entered by the host. */
+  via?: "paper";
+};
 
 export interface Store {
   readonly kind: "redis" | "memory";

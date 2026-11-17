@@ -10,7 +10,7 @@ import type { VotePair } from "./suspense";
 /** The beats of a face-to-face reveal, in order. */
 export type ScriptBeat =
   | { kind: "intro" }
-  | { kind: "vote"; voterId: string; targetId: string; n: number; total: number; advance?: boolean }
+  | { kind: "vote"; voterId: string; targetId: string; n: number; total: number; advance?: boolean; paper?: boolean }
   | { kind: "tie" }
   | { kind: "recount"; voterId: string; targetId: string; n: number; total: number }
   | { kind: "draw-announce" }
@@ -24,6 +24,8 @@ export type ScriptCard = {
   call?: string;
   /** The vote recorded for them, so the host can correct a different answer. */
   expect?: string;
+  /** What `expect` is: their Slack vote, or the paper vote the host entered. */
+  expectLabel?: string;
   /** Lines for the host to read out. */
   say: string[];
   /** Private notes for the host. */
@@ -32,12 +34,23 @@ export type ScriptCard = {
   tally?: { name: string; count: number }[];
 };
 
-/** `advance`: voters who voted before the meeting (they aren't there; the host reads their vote out). */
-export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = []): ScriptBeat[] {
+/**
+ * `advance`: voters who voted before the meeting (they aren't there; the host reads their vote out).
+ * `paper`: office voters whose paper vote the host entered.
+ */
+export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = [], paper: string[] = []): ScriptBeat[] {
   const early = new Set(advance);
+  const onPaper = new Set(paper);
   const beats: ScriptBeat[] = [{ kind: "intro" }];
   order.forEach((v, i) =>
-    beats.push({ kind: "vote", ...v, n: i + 1, total: order.length, ...(early.has(v.voterId) ? { advance: true } : {}) }),
+    beats.push({
+      kind: "vote",
+      ...v,
+      n: i + 1,
+      total: order.length,
+      ...(early.has(v.voterId) ? { advance: true } : {}),
+      ...(onPaper.has(v.voterId) ? { paper: true } : {}),
+    }),
   );
   const tb = outcome.tiebreak;
   if (tb) {
@@ -100,15 +113,17 @@ export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], ou
           tally: tally(order, beat.n, name),
         };
       }
+      const where = beat.paper ? "paper" : "recorded";
       return {
         kind: beat.kind,
-        heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""}`,
+        heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""}${beat.paper ? " · on paper" : " · on Slack"}`,
         call: name(beat.voterId),
         expect: name(beat.targetId),
+        ...(beat.paper ? { expectLabel: "Paper vote" } : {}),
         say: last ? [`And the final vote… ${name(beat.voterId)}.`] : [`${name(beat.voterId)}, who did you vote for?`],
         note: self
-          ? "They voted for themselves."
-          : `If they name anyone other than ${name(beat.targetId)}, their recorded vote was for ${name(beat.targetId)}.`,
+          ? `Their ${where} vote was for themselves.`
+          : `If they name anyone other than ${name(beat.targetId)}, their ${where} vote was for ${name(beat.targetId)}.`,
         tally: tally(order, beat.n, name),
       };
     }

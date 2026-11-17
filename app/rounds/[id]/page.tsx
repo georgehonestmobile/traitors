@@ -6,10 +6,12 @@ import { getRsvps } from "@/lib/meeting";
 import { getReveal, getRevealDefaults, toView } from "@/lib/reveal";
 import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
-import { getStore } from "@/lib/store";
+import { getStore, joinLocksAt } from "@/lib/store";
+import { AttendanceSelect } from "@/components/AttendanceSelect";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
 import { MeetingPanel } from "@/components/MeetingPanel";
+import { PaperVotePanel } from "@/components/PaperVotePanel";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
 import { TestVotePanel } from "@/components/TestVotePanel";
@@ -47,6 +49,9 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const requestedAt = m?.requestedAt ? Date.parse(m.requestedAt) : Infinity;
   const isAdvance = (at: string) => Date.parse(at) < requestedAt;
   const advanceVotes = votes.filter((v) => isAdvance(v.at)).length;
+  const paperVotes = votes.filter((v) => v.via === "paper");
+  const paperIds = new Set(paperVotes.map((v) => v.voterId));
+  const officeIds = round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && rsvps[pl.id].join === "office").map((pl) => pl.id);
   const voting = !!m?.requestedAt && !m.finishedAt;
   const closedAt = round.closedEarlyAt && Date.parse(round.closedEarlyAt) < Date.parse(round.closesAt) ? round.closedEarlyAt : round.closesAt;
 
@@ -97,11 +102,25 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                     <td><span className="who"><Avatar player={p} />{p.name}</span></td>
                     {m ? (
                       <td>
-                        {round.test ? <span className="muted">Test</span>
-                          : rsvps[p.id]?.answer === "yes" ? <span className="okc">✅ Coming</span>
-                          : rsvps[p.id]?.answer === "no" ? <span className="muted">❌ Can&apos;t come</span>
-                          : d?.error ? <span className="errc" title={d.error}>DM failed</span>
-                          : <span className="faint">{status === "scheduled" ? "Not sent yet" : "No reply"}</span>}
+                        {(() => {
+                          const r = rsvps[p.id];
+                          if (round.test) return <span className="muted">Test</span>;
+                          const label =
+                            r?.answer === "yes" ? "✅ Coming, how?"
+                            : r?.answer === "no" ? "❌ Can't come"
+                            : d?.error ? "DM failed"
+                            : status === "scheduled" ? "Not sent yet" : "No reply";
+                          // Until votes are requested, the host can say how someone is joining.
+                          if (!m.requestedAt && status === "open" && !votedAt.has(p.id)) {
+                            return <AttendanceSelect roundId={round.id} playerId={p.id} join={r?.answer === "yes" ? r.join : undefined} label={label} />;
+                          }
+                          return r?.answer === "yes" && r.join === "office" ? <span className="okc">🏢 In the office</span>
+                            : r?.answer === "yes" && r.join === "dial-in" ? <span className="okc">💻 Dialling in</span>
+                            : r?.answer === "yes" ? <span className="okc">✅ Coming</span>
+                            : r?.answer === "no" ? <span className="muted">❌ Can&apos;t come</span>
+                            : d?.error ? <span className="errc" title={d.error}>DM failed</span>
+                            : <span className="faint">{label}</span>;
+                        })()}
                       </td>
                     ) : (
                     <td>
@@ -113,7 +132,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                     </td>
                     )}
                     <td>
-                      {at ? <span className="okc">✓ Voted <span className="muted">{m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
+                      {at ? <span className="okc">✓ Voted <span className="muted">{m && paperIds.has(p.id) ? "on paper" : m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
                     </td>
                   </tr>
@@ -134,7 +153,9 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               rsvpOpen={!m.requestedAt && now >= Date.parse(m.rsvpOpensAt) && now < Date.parse(m.rsvpClosesAt)}
               rsvpClosed={now >= Date.parse(m.rsvpClosesAt)}
               counts={{
-                coming: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes").length,
+                office: officeIds.length,
+                dialIn: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && rsvps[pl.id].join === "dial-in").length,
+                undecided: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && !rsvps[pl.id].join).length,
                 cantCome: round.players.filter((pl) => rsvps[pl.id]?.answer === "no").length,
                 advanceVotes,
                 noReply: round.players.filter((pl) => !rsvps[pl.id]).length,
@@ -144,11 +165,25 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               votingClosesAt={m.votingClosesAt}
               finished={!!m.finishedAt || (status === "closed" && !voting)}
               votesIn={votes.length}
-              meetingVotes={votes.length - advanceVotes}
+              slackVotes={votes.length - advanceVotes - paperVotes.length}
+              paperVotes={paperVotes.length}
+              joinLocksLabel={formatDateTime(joinLocksAt(m))}
+              joinLocked={now >= Date.parse(joinLocksAt(m))}
+              joinAskedLabel={m.joinAskedAt ? formatDateTime(m.joinAskedAt) : undefined}
               test={!!round.test}
             />
           )}
-          {round.test && status === "open" && (
+          {m?.requestedAt && (
+            <PaperVotePanel
+              roundId={round.id}
+              players={round.players}
+              officeIds={officeIds}
+              votedIds={votes.map((v) => v.voterId)}
+              paperVotes={paperVotes.map((v) => ({ voterId: v.voterId, targetId: v.targetId }))}
+              locked={!!reveal}
+            />
+          )}
+          {round.test && status === "open" && !m?.requestedAt && (
             <TestVotePanel
               roundId={round.id}
               players={round.players}

@@ -2,7 +2,7 @@ import { formatDateTime } from "./format";
 import type { Game } from "./game";
 import { roundStatus } from "./rounds";
 import { formatDay, type ScheduleRow, type ScheduleSummary } from "./schedule";
-import type { Round } from "./store";
+import { joinLocksAt, type Round } from "./store";
 import { addDays, appTimeZone, ymdIn, zonedTime } from "./time";
 
 /**
@@ -41,6 +41,8 @@ export function buildTodos(args: {
   revealed: Set<string>;
   today: string;
   now?: number;
+  /** Meeting rounds: how many attendees haven't said whether they're in the office or dialling in. */
+  undecided?: Record<string, number>;
 }): Todo[] {
   const { game, schedule, rounds, revealed, today } = args;
   const now = args.now ?? Date.now();
@@ -93,6 +95,18 @@ export function buildTodos(args: {
     if (round.test || round.cancelledAt) continue;
     const status = roundStatus(round, now);
     const m = round.meeting;
+    // Attendees who said they're coming but not how (and haven't been asked yet).
+    const undecided = args.undecided?.[round.id] ?? 0;
+    if (m && status === "open" && !m.requestedAt && !m.joinAskedAt && undecided > 0 && now < Date.parse(joinLocksAt(m))) {
+      todos.push({
+        id: `join:${round.id}`,
+        title: `Ask ${undecided} ${undecided === 1 ? "player" : "players"} how they're joining “${round.title}”`,
+        detail: `They said they're coming, but not whether they'll be in the office (paper vote) or dialling in (Slack vote). Choices lock ${formatDateTime(joinLocksAt(m))}.`,
+        urgency: "now",
+        href: `/rounds/${round.id}`,
+        action: "Open the round",
+      });
+    }
     // Meetings about to start: request votes.
     if (m && status === "open" && !m.requestedAt && now >= Date.parse(m.at) - 30 * 60 * 1000) {
       todos.push({
@@ -110,7 +124,7 @@ export function buildTodos(args: {
       todos.push({
         id: `reveal:${round.id}`,
         title: `Reveal the result of “${round.title}”`,
-        detail: m ? "Run the face-to-face script." : "Run the reveal in Slack, or face to face.",
+        detail: m ? "Enter any paper votes from the office, then run the face-to-face script." : "Run the reveal in Slack, or face to face.",
         urgency: "now",
         href: `/rounds/${round.id}`,
         action: "Open the round",

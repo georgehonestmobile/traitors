@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
 import { departures, gameStats, getCurrentGame, getNotPlaying } from "@/lib/game";
+import { undecidedAttendees } from "@/lib/meeting";
 import { getReveal } from "@/lib/reveal";
 import { formatDay, summarize, todayIn } from "@/lib/schedule";
 import { buildTodos, roundForRow } from "@/lib/todo";
@@ -86,7 +87,15 @@ export default async function Home() {
     thisGame.filter((r) => roundStatus(r, now) === "closed").map(async (r) => [r.id, await getReveal(r.id)] as const),
   );
   const revealed = new Set(reveals.filter(([, st]) => st?.status === "done").map(([id]) => id));
-  const todos = buildTodos({ game, schedule, rounds: thisGame, revealed, today, now });
+  // Meeting rounds waiting on votes: attendees who haven't said whether they're in the office or dialling in.
+  const undecided = Object.fromEntries(
+    await Promise.all(
+      thisGame
+        .filter((r) => r.meeting && !r.test && !r.meeting.requestedAt && roundStatus(r, now) === "open")
+        .map(async (r) => [r.id, (await undecidedAttendees(r)).length] as const),
+    ),
+  );
+  const todos = buildTodos({ game, schedule, rounds: thisGame, revealed, today, now, undecided });
   const setUp = Object.fromEntries(
     schedule.rows
       .filter((r) => r.kind === "banishment")

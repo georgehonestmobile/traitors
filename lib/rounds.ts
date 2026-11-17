@@ -272,8 +272,11 @@ export async function castVote(args: { roundId: string; voterId: string; targetI
     const m = round.meeting;
     const now = Date.now();
     const inMeeting = !!m.requestedAt && now >= Date.parse(m.requestedAt) && now < Date.parse(m.votingClosesAt!) + MEETING_GRACE_MS;
-    if (!inMeeting) {
-      const rsvp = (await store.getFields<Rsvp>(rsvpKey(round.id)))[voter.id];
+    const rsvp = (await store.getFields<Rsvp>(rsvpKey(round.id)))[voter.id];
+    if (inMeeting) {
+      // The office votes on paper.
+      if (rsvp?.join === "office") return result("not_open", msg.officeVoteMessage(round));
+    } else {
       const advance = !m.requestedAt && rsvp?.answer === "no" && now < Date.parse(m.at);
       if (!advance) return result("not_open", msg.meetingWaitMessage(round));
     }
