@@ -19,7 +19,40 @@ function Tally({ rows }: { rows: { name: string; count: number }[] }) {
   );
 }
 
-function Card({ card }: { card: ScriptCard }) {
+/** Office voters: tap the name on their paper. */
+function PaperPicker({ paper, busy, onPaper }: { paper: NonNullable<ScriptCard["paper"]>; busy: boolean; onPaper: Props["onPaper"] }) {
+  const chosen = paper.targetId;
+  return (
+    <div className="paper-picker">
+      <div className="label"><span>Their paper says</span></div>
+      <div className="paper-names">
+        {paper.options.map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            className={`chip${chosen === o.id ? " on" : ""}`}
+            aria-pressed={chosen === o.id}
+            disabled={busy}
+            onClick={() => onPaper(paper.voterId, o.id)}
+          >
+            {o.id === paper.voterId ? `${o.name} (self)` : o.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`chip faint-chip${chosen === null ? " on" : ""}`}
+          aria-pressed={chosen === null}
+          disabled={busy}
+          onClick={() => onPaper(paper.voterId, null)}
+        >
+          Blank / no vote
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Card({ card, busy, onPaper }: { card: ScriptCard; busy: boolean; onPaper: Props["onPaper"] }) {
   return (
     <div className={`script-card ${card.kind}`}>
       <div className="script-heading">{card.heading}</div>
@@ -29,7 +62,7 @@ function Card({ card }: { card: ScriptCard }) {
           <div className="script-name">{card.call}</div>
         </div>
       )}
-      {card.expect && (
+      {card.expect && !card.paper && (
         <div className="script-expect">
           <span>{card.expectLabel ?? "Recorded vote"} <em>(host only)</em></span>
           <strong>{card.expect}</strong>
@@ -40,6 +73,7 @@ function Card({ card }: { card: ScriptCard }) {
           <p key={i}>“{line}”</p>
         ))}
       </div>
+      {card.paper && <PaperPicker paper={card.paper} busy={busy} onPaper={onPaper} />}
       {card.note && <p className="hint">{card.note}</p>}
       {card.tally && card.tally.length > 0 && (
         <>
@@ -58,21 +92,25 @@ type Props = {
   busy: boolean;
   error: string | null;
   onAction: (action: "next" | "prev" | "reset") => void;
+  /** Enter the name on an office voter's paper (null: blank or spoilt). */
+  onPaper: (voterId: string, targetId: string | null) => void;
 };
 
 /** Face-to-face reveal: the host steps through a script. Nothing is posted in Slack. */
-export function ScriptPanel({ view, busy, error, onAction }: Props) {
+export function ScriptPanel({ view, busy, error, onAction, onPaper }: Props) {
   const script = view.script ?? [];
   const index = Math.max(0, view.stepsDone - 1);
   const card = script[index];
   const done = view.status === "done";
+  // An office voter's card waits for the name on their paper.
+  const waiting = !!card?.paper && card.paper.targetId === undefined;
 
   // Arrow keys / space to move through the script.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target;
       if (el instanceof HTMLElement && el.closest("input, textarea, select, button")) return;
-      if ((e.key === "ArrowRight" || e.key === " ") && !done && !busy) {
+      if ((e.key === "ArrowRight" || e.key === " ") && !done && !busy && !waiting) {
         e.preventDefault();
         onAction("next");
       } else if (e.key === "ArrowLeft" && index > 0 && !busy) {
@@ -82,7 +120,7 @@ export function ScriptPanel({ view, busy, error, onAction }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [done, busy, index, onAction]);
+  }, [done, busy, waiting, index, onAction]);
 
   return (
     <section className="panel script-panel">
@@ -98,13 +136,13 @@ export function ScriptPanel({ view, busy, error, onAction }: Props) {
       </div>
 
       {error && <div className="error">{error}</div>}
-      {card && <Card card={card} />}
+      {card && <Card card={card} busy={busy} onPaper={onPaper} />}
 
       <div className="script-nav">
         <button className="btn" disabled={busy || index === 0} onClick={() => onAction("prev")}>← Back</button>
         {!done ? (
-          <button className="btn primary" disabled={busy} onClick={() => onAction("next")}>
-            {index + 2 === script.length ? "Verdict →" : "Next →"}
+          <button className="btn primary" disabled={busy || waiting} onClick={() => onAction("next")}>
+            {waiting ? "Enter their paper first" : index + 2 === script.length ? "Verdict →" : "Next →"}
           </button>
         ) : (
           <button
@@ -123,7 +161,9 @@ export function ScriptPanel({ view, busy, error, onAction }: Props) {
           {script.map((c, i) => (
             <li key={i} className={i === index ? "current" : i < index ? "past" : undefined}>
               <b>{c.heading}</b>
-              {c.call ? (
+              {c.paper ? (
+                <>: call on <b>{c.call}</b>, paper {c.paper.targetId === undefined ? "not revealed yet" : c.paper.targetId === null ? "blank" : <>says <b>{c.expect}</b></>}</>
+              ) : c.call ? (
                 <>: call on <b>{c.call}</b>, voted for <b>{c.expect}</b></>
               ) : (
                 <>: {c.say.join(" ")}</>

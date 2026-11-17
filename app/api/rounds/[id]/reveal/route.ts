@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { RoundError } from "@/lib/rounds";
-import { moveScript, pauseReveal, resetReveal, resumeReveal, startReveal, stepReveal } from "@/lib/reveal";
+import { enterPaperVote, moveScript, pauseReveal, resetReveal, resumeReveal, startReveal, stepReveal } from "@/lib/reveal";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -24,6 +24,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ view: await stepReveal(id, { force: true }) });
       case "prev":
         return NextResponse.json({ view: await moveScript(id, -1) });
+      case "paper":
+        return NextResponse.json({
+          view: await enterPaperVote(id, String(body.voterId ?? ""), body.targetId ? String(body.targetId) : null),
+        });
       case "pause":
         return NextResponse.json({ view: await pauseReveal(id) });
       case "resume":

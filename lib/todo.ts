@@ -124,7 +124,7 @@ export function buildTodos(args: {
       todos.push({
         id: `reveal:${round.id}`,
         title: `Reveal the result of “${round.title}”`,
-        detail: m ? "Enter any paper votes from the office, then run the face-to-face script." : "Run the reveal in Slack, or face to face.",
+        detail: m ? "Run the face-to-face script. Enter each office paper vote as it's revealed." : "Run the reveal in Slack, or face to face.",
         urgency: "now",
         href: `/rounds/${round.id}`,
         action: "Open the round",

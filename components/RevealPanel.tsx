@@ -204,7 +204,15 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
   }
 
   if (view.mode === "in-person") {
-    return <ScriptPanel view={view} busy={busy} error={error} onAction={(a) => run(a)} />;
+    return (
+      <ScriptPanel
+        view={view}
+        busy={busy}
+        error={error}
+        onAction={(a) => run(a)}
+        onPaper={(voterId, targetId) => run("paper", { voterId, targetId })}
+      />
+    );
   }
 
   /* ---------- Running / paused / done ---------- */

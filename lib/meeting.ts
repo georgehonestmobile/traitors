@@ -1,7 +1,6 @@
 import * as msg from "./messages";
 import { MEETING_VOTE_MS, RoundError, roundStatus } from "./rounds";
 import * as slack from "./slack";
-import { getReveal } from "./reveal";
 import { getStore, joinLocksAt, rsvpKey, type JoinMode, type Round, type Rsvp } from "./store";
 
 /**
@@ -11,8 +10,9 @@ import { getStore, joinLocksAt, rsvpKey, type JoinMode, type Round, type Rsvp } 
  *  2. "Can't make it" replies get a ballot straight away: an advance vote, read out by the host.
  *  3. In the meeting, the host requests votes: everyone who hasn't voted, except those in the office,
  *     gets a ballot with one minute to vote. Votes not made in time don't count.
- *  4. The office votes on paper, and the host enters those votes.
- *  5. The host runs the face-to-face script.
+ *  4. The office votes on paper.
+ *  5. The host runs the face-to-face script. Office voters reveal their paper when called on, and the
+ *     host enters each name as it's revealed.
  */
 
 const GRACE_MS = 3 * 1000;
@@ -125,31 +125,6 @@ export async function setAttendance(roundId: string, playerId: string, join: Joi
     joinAt: at,
     byHost: true,
   } satisfies Rsvp);
-}
-
-/** Paper votes from the office, entered by the host once votes have been requested and before the reveal. */
-async function paperGate(roundId: string) {
-  const round = await load(roundId);
-  if (!round.meeting!.requestedAt) throw new RoundError("Request votes first.");
-  if (await getReveal(roundId)) throw new RoundError("The reveal has started. Reset it to change votes.");
-  return round;
-}
-
-export async function recordPaperVote(roundId: string, voterId: string, targetId: string) {
-  const round = await paperGate(roundId);
-  const voter = round.players.find((p) => p.id === voterId);
-  const target = round.players.find((p) => p.id === targetId);
-  if (!voter || !target) throw new RoundError("Both players must be in this round.");
-  const ok = await getStore().castVote(roundId, { voterId, targetId, at: new Date().toISOString(), via: "paper" });
-  if (!ok) throw new RoundError(`${voter.name} has already voted.`);
-}
-
-export async function removePaperVote(roundId: string, voterId: string) {
-  await paperGate(roundId);
-  const vote = (await getStore().getVotes(roundId)).find((v) => v.voterId === voterId);
-  if (!vote) throw new RoundError("No vote to remove.");
-  if (vote.via !== "paper") throw new RoundError("Only paper votes can be removed here.");
-  await getStore().deleteVote(roundId, voterId);
 }
 
 /** In the meeting: open the one-minute vote and DM a ballot to everyone who hasn't voted. */

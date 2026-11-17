@@ -28,8 +28,10 @@ When you call a vote, choose a format:
    - You can change anyone's choice in the round page's RSVP column until you request votes (e.g. they tell you in person, or never replied).
    - Players who replied "I'll be there" on an older RSVP without saying how show as **Coming, not said how**. Press **Ask N how they're joining** on the round page (it's also on the to-do list) to DM them the office/dialling-in question. Anyone still undecided gets a Slack ballot in the meeting, like dialling in.
 4. **In the meeting**, press **⏱️ Request votes (1 minute)** on the round page. Everyone who hasn't voted, **except the office**, gets a ballot in Slack with one minute to vote. The page shows a countdown and votes coming in; you can end it early. Ballots not used in time switch to "Time's up" and don't count. The office votes on paper at the same time.
-5. **Enter the paper votes** in the **📝 Paper votes** panel (pick who, then who they voted for; **Undo** fixes mistakes). Do this before starting the script, as votes lock once it starts.
-6. Run the **face-to-face script**: it orders all the votes for suspense, tells you who to call on and what they voted (their paper or Slack vote, so you can call out a different answer), and marks advance votes for you to read out.
+5. Run the **face-to-face script** once the Slack minute is over. It sets the whole running order up front: advance and Slack votes ordered for suspense, with the office spread through it (one of them makes the final call), so the result stays in doubt.
+   - **Slack and advance votes:** it shows who to call on and what they voted, so you can call out a different answer, and marks advance votes for you to read out.
+   - **The office:** when it calls on someone in the office, they reveal their paper and you tap that name on the card (or **Blank / no vote**). The count updates, and you can't move on until it's entered. Go **Back** to correct one.
+   - Once the last paper is in, it works out the result, including any tiebreak or straw draw, and carries on to the verdict.
 
 **💬 Remote (Slack)**: players vote in Slack over a window you set. Afterwards, run the reveal in a Slack channel to announce the results (or face to face).
 

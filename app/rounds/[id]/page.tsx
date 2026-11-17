@@ -11,7 +11,6 @@ import { AttendanceSelect } from "@/components/AttendanceSelect";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
 import { MeetingPanel } from "@/components/MeetingPanel";
-import { PaperVotePanel } from "@/components/PaperVotePanel";
 import { Avatar } from "@/components/Avatar";
 import { RevealPanel } from "@/components/RevealPanel";
 import { TestVotePanel } from "@/components/TestVotePanel";
@@ -133,6 +132,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                     )}
                     <td>
                       {at ? <span className="okc">✓ Voted <span className="muted">{m && paperIds.has(p.id) ? "on paper" : m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
+                        : m?.requestedAt && officeIds.includes(p.id) ? <span className="muted">On paper, revealed in the script</span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
                     </td>
                   </tr>
@@ -171,16 +171,6 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               joinLocked={now >= Date.parse(joinLocksAt(m))}
               joinAskedLabel={m.joinAskedAt ? formatDateTime(m.joinAskedAt) : undefined}
               test={!!round.test}
-            />
-          )}
-          {m?.requestedAt && (
-            <PaperVotePanel
-              roundId={round.id}
-              players={round.players}
-              officeIds={officeIds}
-              votedIds={votes.map((v) => v.voterId)}
-              paperVotes={paperVotes.map((v) => ({ voterId: v.voterId, targetId: v.targetId }))}
-              locked={!!reveal}
             />
           )}
           {round.test && status === "open" && !m?.requestedAt && (

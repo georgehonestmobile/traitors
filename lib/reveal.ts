@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 import * as slack from "./slack";
-import { getStore, type Player, type Round } from "./store";
+import { getStore, rsvpKey, type Player, type Round, type Rsvp } from "./store";
 import { RoundError, roundStatus } from "./rounds";
 import { removeFromOpenRounds } from "./departure";
 import { banish, unbanish } from "./game";
 import { resolveOutcome, type Outcome } from "./outcome";
-import { scriptBeats, scriptCard, type ScriptBeat, type ScriptCard } from "./script";
+import { scriptCard, tailBeats, voteBeats, type PaperEntries, type ScriptBeat, type ScriptCard } from "./script";
 import * as pace from "./pacing";
 import { suspensefulOrder, winners, type VotePair } from "./suspense";
 
@@ -51,6 +51,12 @@ export type RevealState = RevealSettings & {
   plan: Step[];
   /** Face-to-face reveals only: the script, in order. `next` counts the cards shown so far. */
   beats?: ScriptBeat[];
+  /**
+   * Meeting banishments: office voters, whose paper vote isn't known until they reveal it.
+   * The host enters each one in the script; the result is worked out once they're all in.
+   */
+  paperIds?: string[];
+  paper?: PaperEntries;
   next: number;
   nextAt: string;
   status: "running" | "paused" | "done";
@@ -338,9 +344,12 @@ export async function getRevealDefaults(): Promise<Partial<RevealSettings>> {
   return (await getStore().getJSON<RevealSettings>(DEFAULTS_KEY)) ?? {};
 }
 
+/** Votes with a known target (office votes not yet entered, or blank papers, have none). */
+const counted = (order: VotePair[]) => order.filter((v) => v.targetId);
+
 function outcomeOf(state: RevealState): Outcome {
   if (state.outcome) return state.outcome;
-  const w = winners(state.order);
+  const w = winners(counted(state.order));
   return { banished: w.ids, count: w.count, unresolved: w.ids.length > 1 };
 }
 
@@ -353,7 +362,7 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
   const view: RevealView = {
     mode: inPerson ? "in-person" : "slack",
     ...(inPerson
-      ? { script: (state.beats ?? []).map((b) => scriptCard(b, round, state.order, outcomeOf(state), state.beats)) }
+      ? { script: (state.beats ?? []).map((b) => scriptCard(b, round, state.order, outcomeOf(state), state.beats, state.paper)) }
       : {}),
     status: state.status,
     channelName: state.channelName,
@@ -370,7 +379,7 @@ export function toView(state: RevealState | null, round: Round): RevealView | nu
   if (state.status === "done") {
     const outcome = outcomeOf(state);
     view.result = {
-      tally: named(state.order),
+      tally: named(counted(state.order)),
       banished: outcome.banished.map(name),
       unresolved: outcome.unresolved,
       ...(outcome.drawnFrom ? { drawnFrom: outcome.drawnFrom.map(name) } : {}),
@@ -388,6 +397,68 @@ async function loadRound(id: string) {
   return round;
 }
 
+/**
+ * Spread office voters (votes unknown) through the running order, the last of them on the final call,
+ * so the result stays in doubt to the end. Which office voter goes where is random.
+ */
+function withPaperVoters(known: VotePair[], paperIds: string[]): VotePair[] {
+  if (!paperIds.length) return known;
+  const ids = [...paperIds];
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  const n = known.length + ids.length;
+  const slots = new Set(ids.map((_, i) => Math.floor(((i + 1) * n) / ids.length) - 1));
+  const order: VotePair[] = [];
+  let k = 0;
+  let p = 0;
+  for (let i = 0; i < n; i++) order.push(slots.has(i) ? { voterId: ids[p++], targetId: "" } : known[k++]);
+  return order;
+}
+
+/** Once every paper vote is in, work out the result and add the tie, draw and verdict cards. */
+function settlePaper(state: RevealState) {
+  const votes = (state.beats ?? []).filter((b) => b.kind === "intro" || b.kind === "vote");
+  const complete = (state.paperIds ?? []).every((id) => id in (state.paper ?? {}));
+  if (!complete) {
+    state.outcome = undefined;
+    state.beats = votes;
+    return;
+  }
+  state.outcome = resolveOutcome(counted(state.order));
+  state.beats = [...votes, ...tailBeats(state.outcome)];
+}
+
+/** Face-to-face reveals: the host enters the name on an office voter's paper (null: blank or spoilt). */
+export async function enterPaperVote(roundId: string, voterId: string, targetId: string | null) {
+  const store = getStore();
+  const round = await loadRound(roundId);
+  const state = await getReveal(roundId);
+  if (!state || state.mode !== "in-person" || !state.paperIds?.includes(voterId)) {
+    throw new RoundError("That player isn't voting on paper in this reveal.");
+  }
+  if (targetId && !round.players.some((p) => p.id === targetId)) throw new RoundError("That player isn't in this round.");
+  const beats = state.beats ?? [];
+  const at = beats.findIndex((b) => b.kind === "vote" && b.voterId === voterId);
+  const current = state.next - 1;
+  if (at > current) throw new RoundError("Call on them first.");
+  const lastVote = beats.reduce((last, b, i) => (b.kind === "vote" ? i : last), 0);
+  if (current > lastVote) throw new RoundError("All the votes have been read out. Go back to change a paper vote.");
+
+  state.paper = { ...state.paper, [voterId]: targetId };
+  const t = targetId ?? "";
+  state.order = state.order.map((v) => (v.voterId === voterId ? { ...v, targetId: t } : v));
+  state.beats = beats.map((b) => (b.kind === "vote" && b.voterId === voterId ? { ...b, targetId: t } : b));
+  settlePaper(state);
+  await store.setJSON(stateKey(roundId), state);
+
+  // Keep the round's record of votes in step.
+  await store.deleteVote(roundId, voterId);
+  if (targetId) await store.castVote(roundId, { voterId, targetId, at: new Date().toISOString(), via: "paper" });
+  return toView(state, round);
+}
+
 export async function startReveal(roundId: string, settings: RevealSettings) {
   const store = getStore();
   const round = await loadRound(roundId);
@@ -399,26 +470,54 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
 
   const standingsEvery = clamp(Math.round(settings.standingsEvery ?? 3), 0, 50);
   const eligible = new Set(round.players.map((p) => p.id));
-  const recorded = (await store.getVotes(roundId)).filter((v) => eligible.has(v.voterId) && eligible.has(v.targetId));
+  const all = (await store.getVotes(roundId)).filter((v) => eligible.has(v.voterId) && eligible.has(v.targetId));
+  // Paper votes are entered during the script; any on record are from an earlier run that was reset.
+  const recorded = all.filter((v) => v.via !== "paper");
+  const earlierPaper = all.filter((v) => v.via === "paper");
   const cast = recorded.map((v) => ({ voterId: v.voterId, targetId: v.targetId }));
   // Meeting banishments: votes made before the host requested votes were cast in advance.
   const requested = round.meeting?.requestedAt ? Date.parse(round.meeting.requestedAt) : Infinity;
   const advance = round.format === "meeting" ? recorded.filter((v) => Date.parse(v.at) < requested).map((v) => v.voterId) : [];
-  const paper = recorded.filter((v) => v.via === "paper").map((v) => v.voterId);
-  const order = suspensefulOrder(cast);
-  const outcome = resolveOutcome(order);
+
+  // Office voters who haven't voted: they reveal a paper vote in the script, entered by the host then.
+  let paperIds: string[] = [];
+  if (round.format === "meeting" && round.meeting?.requestedAt) {
+    const rsvps = await store.getFields<Rsvp>(rsvpKey(roundId));
+    const voted = new Set(recorded.map((v) => v.voterId));
+    const papered = new Set(earlierPaper.map((v) => v.voterId));
+    paperIds = round.players
+      .filter((p) => !voted.has(p.id) && (rsvps[p.id]?.join === "office" || papered.has(p.id)))
+      .map((p) => p.id);
+  }
+  const paper: PaperEntries = Object.fromEntries(
+    earlierPaper.filter((v) => paperIds.includes(v.voterId)).map((v) => [v.voterId, v.targetId]),
+  );
+  if (paperIds.length && !inPerson) {
+    throw new RoundError("Players in the office vote on paper, so run this reveal face to face.");
+  }
+
+  const order = withPaperVoters(suspensefulOrder(cast), paperIds).map((v) =>
+    v.voterId in paper ? { ...v, targetId: paper[v.voterId] ?? "" } : v,
+  );
+  const outcome = paperIds.length ? undefined : resolveOutcome(order);
 
   const now = Date.now();
   const state: RevealState = {
     roundId,
     runId: crypto.randomUUID().slice(0, 8),
-    ...(inPerson ? { mode: "in-person" as const, beats: scriptBeats(order, outcome, advance, paper) } : {}),
+    ...(inPerson
+      ? {
+          mode: "in-person" as const,
+          beats: [...voteBeats(order, advance, paperIds), ...(outcome ? tailBeats(outcome) : [])],
+          ...(paperIds.length ? { paperIds, paper } : {}),
+        }
+      : {}),
     channel: inPerson ? "" : settings.channel,
     channelName: inPerson ? "" : settings.channelName,
     standingsEvery,
     order,
     outcome,
-    plan: inPerson ? [] : buildPlan(order, outcome, standingsEvery),
+    plan: inPerson ? [] : buildPlan(order, outcome!, standingsEvery),
     next: inPerson ? 1 : 0, // face to face: the opening card is showing straight away
     nextAt: new Date(now).toISOString(),
     status: "running",
@@ -426,6 +525,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     attempt: 0,
     tsByVoter: {},
   };
+  if (state.paperIds) settlePaper(state); // complete already if every paper was entered in an earlier run
   await store.setJSON(stateKey(roundId), state);
   const previous = await getRevealDefaults();
   await store.setJSON(DEFAULTS_KEY, {
@@ -444,12 +544,19 @@ export async function moveScript(roundId: string, delta: 1 | -1) {
   const state = await getReveal(roundId);
   if (!state || state.mode !== "in-person") return toView(state, round);
   const total = state.beats?.length ?? 0;
+  // Office voters: their paper vote must be entered before moving on.
+  const card = state.beats?.[state.next - 1];
+  if (delta === 1 && card?.kind === "vote" && card.paper && !(card.voterId in (state.paper ?? {}))) {
+    throw new RoundError(`Enter the name on ${playerName(round)(card.voterId)}'s paper first.`);
+  }
   const next = clamp(state.next + delta, 1, total);
   if (next === state.next) return toView(state, round);
 
   const wasDone = state.status === "done";
   state.next = next;
-  state.status = next >= total ? "done" : "running";
+  // Finished on the verdict (until every paper vote is in, there's no verdict card yet).
+  const finished = next >= total && !!state.beats?.some((b) => b.kind === "final");
+  state.status = finished ? "done" : "running";
   state.finishedAt = state.status === "done" ? new Date().toISOString() : undefined;
   await store.setJSON(stateKey(roundId), state);
   if (state.status === "done" && !wasDone) await recordBanished(round, state);

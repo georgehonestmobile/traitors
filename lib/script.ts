@@ -32,13 +32,20 @@ export type ScriptCard = {
   note?: string;
   /** The count after this beat. */
   tally?: { name: string; count: number }[];
+  /** Office voters: the host enters the name on their paper as they reveal it. */
+  paper?: {
+    voterId: string;
+    /** The name entered: a player id, null for a blank or spoilt paper, or undefined if not entered yet. */
+    targetId?: string | null;
+    options: { id: string; name: string }[];
+  };
 };
 
 /**
  * `advance`: voters who voted before the meeting (they aren't there; the host reads their vote out).
- * `paper`: office voters whose paper vote the host entered.
+ * `paper`: office voters, who reveal a paper vote. Until the host enters it, their `targetId` is "".
  */
-export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = [], paper: string[] = []): ScriptBeat[] {
+export function voteBeats(order: VotePair[], advance: string[] = [], paper: string[] = []): ScriptBeat[] {
   const early = new Set(advance);
   const onPaper = new Set(paper);
   const beats: ScriptBeat[] = [{ kind: "intro" }];
@@ -52,6 +59,12 @@ export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string
       ...(onPaper.has(v.voterId) ? { paper: true } : {}),
     }),
   );
+  return beats;
+}
+
+/** After the votes: any tie, recount and draw, then the verdict. Needs every vote to be known. */
+export function tailBeats(outcome: Outcome): ScriptBeat[] {
+  const beats: ScriptBeat[] = [];
   const tb = outcome.tiebreak;
   if (tb) {
     beats.push({ kind: "tie" });
@@ -62,17 +75,31 @@ export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string
   return beats;
 }
 
+export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = [], paper: string[] = []): ScriptBeat[] {
+  return [...voteBeats(order, advance, paper), ...tailBeats(outcome)];
+}
+
 const and = (items: string[]) =>
   items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 const votes = (n: number) => `${n} ${n === 1 ? "vote" : "votes"}`;
 
 function tally(order: VotePair[], upTo: number, name: (id: string) => string) {
   const counts = new Map<string, number>();
-  for (const v of order.slice(0, upTo)) counts.set(v.targetId, (counts.get(v.targetId) ?? 0) + 1);
+  for (const v of order.slice(0, upTo)) if (v.targetId) counts.set(v.targetId, (counts.get(v.targetId) ?? 0) + 1);
   return [...counts].sort((a, b) => b[1] - a[1]).map(([id, count]) => ({ name: name(id), count }));
 }
 
-export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], outcome: Outcome, beats: ScriptBeat[] = []): ScriptCard {
+/** Paper votes entered so far: a player id, or null for a blank paper. Missing until entered. */
+export type PaperEntries = Record<string, string | null>;
+
+export function scriptCard(
+  beat: ScriptBeat,
+  round: Round,
+  order: VotePair[],
+  outcome: Outcome,
+  beats: ScriptBeat[] = [],
+  entries: PaperEntries = {},
+): ScriptCard {
   const names = new Map(round.players.map((p) => [p.id, p.name]));
   const name = (id: string) => names.get(id) ?? "Unknown";
   const tb = outcome.tiebreak;
@@ -92,8 +119,13 @@ export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], ou
             ? [`${early} ${early === 1 ? "player" : "players"} couldn't be with us and voted in advance. I'll read those votes out.`]
             : []),
           "When I call your name, reveal who you believe is a Traitor, and tell us why.",
+          ...(beats.some((b) => b.kind === "vote" && b.paper)
+            ? ["If you're in the office, hold up your paper when I call your name."]
+            : []),
         ],
-        note: "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible.",
+        note: beats.some((b) => b.kind === "vote" && b.paper)
+          ? "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible. For the office, enter the name on each paper as it's revealed."
+          : "Call each player in the order shown. The order is picked to keep the result in doubt for as long as possible.",
       };
     }
     case "vote": {
@@ -113,17 +145,39 @@ export function scriptCard(beat: ScriptBeat, round: Round, order: VotePair[], ou
           tally: tally(order, beat.n, name),
         };
       }
-      const where = beat.paper ? "paper" : "recorded";
+      if (beat.paper) {
+        const entered = entries[beat.voterId];
+        const known = beat.voterId in entries;
+        return {
+          kind: beat.kind,
+          heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""} · on paper`,
+          call: name(beat.voterId),
+          ...(entered ? { expect: name(entered), expectLabel: "Their paper says" } : {}),
+          say: last
+            ? [`And the final vote… ${name(beat.voterId)}, please reveal your paper.`]
+            : [`${name(beat.voterId)}, please reveal your paper. Who did you vote for?`],
+          note: !known
+            ? "Tap the name on their paper. The count updates once it's in."
+            : entered === null
+              ? "Blank or spoilt paper: no vote. Tap a name to change it."
+              : "Entered from their paper. Tap another name to change it.",
+          tally: tally(order, beat.n, name),
+          paper: {
+            voterId: beat.voterId,
+            ...(known ? { targetId: entered } : {}),
+            options: round.players.map((p) => ({ id: p.id, name: p.name })),
+          },
+        };
+      }
       return {
         kind: beat.kind,
-        heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""}${beat.paper ? " · on paper" : " · on Slack"}`,
+        heading: `Vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""} · on Slack`,
         call: name(beat.voterId),
         expect: name(beat.targetId),
-        ...(beat.paper ? { expectLabel: "Paper vote" } : {}),
         say: last ? [`And the final vote… ${name(beat.voterId)}.`] : [`${name(beat.voterId)}, who did you vote for?`],
         note: self
-          ? `Their ${where} vote was for themselves.`
-          : `If they name anyone other than ${name(beat.targetId)}, their ${where} vote was for ${name(beat.targetId)}.`,
+          ? "They voted for themselves."
+          : `If they name anyone other than ${name(beat.targetId)}, their recorded vote was for ${name(beat.targetId)}.`,
         tally: tally(order, beat.n, name),
       };
     }

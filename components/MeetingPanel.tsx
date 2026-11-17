@@ -176,8 +176,9 @@ export function MeetingPanel(p: Props) {
 
       {p.finished && (
         <div className="summary" style={{ marginTop: 16, marginBottom: 0 }}>
-          Slack voting closed: <b>{p.votesIn}</b> {p.votesIn === 1 ? "vote" : "votes"} so far ({p.counts.advanceVotes} in advance, {p.slackVotes} on Slack in the
-          meeting, {p.paperVotes} on paper). Enter any paper votes still to go, then run the face-to-face script below.
+          Slack voting closed: <b>{p.counts.advanceVotes}</b> in advance and <b>{p.slackVotes}</b> on Slack in the meeting
+          {p.counts.office ? <>, plus <b>{p.counts.office}</b> in the office on paper</> : null}. Run the face-to-face script below
+          {p.counts.office ? ". When you call on someone in the office, enter the name on their paper as they reveal it." : "."}
         </div>
       )}
     </section>
