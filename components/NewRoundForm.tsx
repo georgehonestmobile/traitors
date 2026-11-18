@@ -60,6 +60,7 @@ export function NewRoundForm({
   const [test, setTest] = useState(false);
   const [format, setFormat] = useState<"meeting" | "remote">(defaults?.format ?? "meeting");
   const [meetingAt, setMeetingAt] = useState("");
+  const [virtual, setVirtual] = useState(false);
   // Times depend on the browser's clock and timezone, so fill them in after mount.
   const [opensAt, setOpensAt] = useState("");
   const [closesAt, setClosesAt] = useState("");
@@ -117,6 +118,7 @@ export function NewRoundForm({
           test,
           format,
           meetingAt: meeting ? meetingDate.toISOString() : undefined,
+          virtual: meeting && virtual,
           scheduleId: defaults?.scheduleId,
         }),
       });
@@ -142,7 +144,7 @@ export function NewRoundForm({
         </div>
         <p className="hint">
           {meeting
-            ? "Players are asked the day before (9am, reply by 5pm) if they'll be at the meeting. Those who can't come vote in advance; everyone else votes in the meeting, with one minute, when you request votes."
+            ? "Players are asked the day before (9am, reply by 5pm) if they'll be at the meeting. Those who can't come vote in advance; everyone else votes in the meeting when you request votes."
             : "Players vote in Slack over a window you set. Afterwards you announce the results in a Slack channel (or face to face)."}
         </p>
       </div>
@@ -220,6 +222,21 @@ export function NewRoundForm({
         </div>
       )}
 
+      {meeting && (
+        <div className="field">
+          <div className="label"><span>Where</span></div>
+          <div className="chips">
+            <button type="button" className={`chip${!virtual ? " on" : ""}`} onClick={() => setVirtual(false)}>🏢💻 Office or dialling in</button>
+            <button type="button" className={`chip${virtual ? " on" : ""}`} onClick={() => setVirtual(true)}>💻 Everyone dials in</button>
+          </div>
+          <p className="hint">
+            {virtual
+              ? "Players are only asked whether they're coming. Everyone at the meeting votes in Slack, with one minute."
+              : "Attendees also say whether they'll be in the office (vote on paper) or dialling in (vote in Slack, with one minute)."}
+          </p>
+        </div>
+      )}
+
       {!meeting && (<>
       <div className="field">
         <div className="label"><span>Voting opens</span></div>
@@ -258,7 +275,7 @@ export function NewRoundForm({
           ) : (
             <>
               {test ? <>🧪 Test round: nobody is DM&apos;d. </> : null}
-              Meeting <b>{fmt(meetingDate)}</b> with{" "}
+              {virtual ? "All-virtual meeting" : "Meeting"} <b>{fmt(meetingDate)}</b> with{" "}
               <b>{selectedNames.length <= 4 ? selectedNames.join(", ") : `${selected.size} players`}</b>.
               {!test && (
                 <>

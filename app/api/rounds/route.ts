@@ -15,6 +15,7 @@ export async function POST(req: Request) {
       format: body.format === "meeting" ? "meeting" : "remote",
       meetingAt: body.meetingAt ? String(body.meetingAt) : undefined,
       scheduleId: body.scheduleId ? String(body.scheduleId) : undefined,
+      virtual: body.virtual === true,
     });
     return NextResponse.json({ id: round.id });
   } catch (e) {

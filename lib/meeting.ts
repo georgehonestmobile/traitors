@@ -2,7 +2,7 @@ import * as msg from "./messages";
 import { MEETING_VOTE_MS, RoundError, roundStatus } from "./rounds";
 import * as slack from "./slack";
 import { getReveal, paperSettled } from "./reveal";
-import { getStore, joinLocksAt, paperKey, rsvpKey, type JoinMode, type PaperEntry, type Round, type Rsvp } from "./store";
+import { getStore, inOffice, joinLocksAt, paperKey, rsvpKey, type JoinMode, type Meeting, type PaperEntry, type Round, type Rsvp } from "./store";
 
 /**
  * Meeting banishments:
@@ -14,6 +14,9 @@ import { getStore, joinLocksAt, paperKey, rsvpKey, type JoinMode, type PaperEntr
  *  4. The office votes on paper.
  *  5. The host runs the face-to-face script. Office voters reveal their paper when called on, and
  *     whoever is helping enters each name on the round page as it's revealed.
+ *
+ * All-virtual meetings (`meeting.virtual`) skip the office: attendees are only asked whether they're
+ * coming, and everyone at the meeting votes in Slack.
  */
 
 const GRACE_MS = 3 * 1000;
@@ -30,6 +33,12 @@ async function load(id: string) {
 }
 
 export type RsvpChoice = "yes" | "no" | JoinMode;
+
+/** What an RSVP can still change: coming or not (until 5pm the day before), office or dialling in (until an hour before). */
+const changeable = (m: Meeting, now = Date.now()) => ({
+  answer: !m.requestedAt && now < Date.parse(m.rsvpClosesAt),
+  join: !m.virtual && !m.requestedAt && now < Date.parse(joinLocksAt(m)),
+});
 
 const lockLabel = (iso: string) => `<!date^${Math.floor(Date.parse(iso) / 1000)}^{time}|${new Date(iso).toUTCString()}>`;
 
@@ -48,11 +57,12 @@ export async function recordRsvp(roundId: string, voterId: string, choice: RsvpC
   // Coming or not: until 5pm the day before. Office or dialling in: until an hour before the meeting.
   const answerOpen = !m.requestedAt && now <= Date.parse(m.rsvpClosesAt) + GRACE_MS;
   const joinOpen = !m.requestedAt && now <= Date.parse(joinLocksAt(m)) + GRACE_MS;
-  const can = { answer: !m.requestedAt && now < Date.parse(m.rsvpClosesAt), join: !m.requestedAt && now < Date.parse(joinLocksAt(m)) };
+  const can = changeable(m, now);
 
   const answer = choice === "no" ? "no" : "yes";
-  const join = choice === "office" || choice === "dial-in" ? choice : current?.answer === "yes" ? current.join : undefined;
-  const switchingJoin = current?.answer === "yes" && answer === "yes";
+  // All-virtual: any "coming" button (including office/dial-in on an older message) just means yes.
+  const join = !m.virtual && (choice === "office" || choice === "dial-in") ? choice : current?.answer === "yes" ? current.join : undefined;
+  const switchingJoin = !m.virtual && current?.answer === "yes" && answer === "yes";
 
   if (switchingJoin ? !joinOpen : !answerOpen) {
     if (current?.answer === "yes") {
@@ -79,6 +89,7 @@ export async function recordRsvp(roundId: string, voterId: string, choice: RsvpC
 
 /** Attendees who said they'd come but not how (they replied before the office/dial-in choice existed). */
 export async function undecidedAttendees(round: Round) {
+  if (round.meeting?.virtual) return [];
   const rsvps = await getRsvps(round.id);
   return round.players.filter((p) => rsvps[p.id]?.answer === "yes" && !rsvps[p.id].join);
 }
@@ -88,6 +99,7 @@ export async function askHowJoining(roundId: string) {
   const store = getStore();
   const round = await load(roundId);
   const m = round.meeting!;
+  if (m.virtual) throw new RoundError("Everyone is dialling in to this meeting.");
   if (m.requestedAt) throw new RoundError("Votes have already been requested.");
   if (Date.now() >= Date.parse(joinLocksAt(m))) throw new RoundError("It's less than an hour until the meeting, so choices are locked.");
   const who = await undecidedAttendees(round);
@@ -115,6 +127,7 @@ export async function askHowJoining(roundId: string) {
 export async function setAttendance(roundId: string, playerId: string, join: JoinMode) {
   const store = getStore();
   const round = await load(roundId);
+  if (round.meeting!.virtual) throw new RoundError("Everyone is dialling in to this meeting.");
   if (round.meeting!.requestedAt) throw new RoundError("Votes have already been requested.");
   if (!round.players.some((p) => p.id === playerId)) throw new RoundError("That player isn't in this round.");
   const current = (await getRsvps(roundId))[playerId];
@@ -126,6 +139,53 @@ export async function setAttendance(roundId: string, playerId: string, join: Joi
     joinAt: at,
     byHost: true,
   } satisfies Rsvp);
+}
+
+/**
+ * Turn the office on or off: off means everyone dials in, so attendees are only asked whether they're
+ * coming. Until votes are requested. RSVP DMs still to go out are rescheduled with the new wording,
+ * and ones already sent (when we know where) are updated in place. Earlier office/dial-in answers are
+ * kept, so turning the office back on restores them.
+ */
+export async function setVirtual(roundId: string, virtual: boolean) {
+  const store = getStore();
+  const round = await load(roundId);
+  const m = round.meeting!;
+  const status = roundStatus(round);
+  if (status === "cancelled" || status === "closed") throw new RoundError(`This round is ${status}.`);
+  if (m.requestedAt) throw new RoundError("Votes have already been requested.");
+  if (!!m.virtual === virtual) return round;
+  if (virtual) m.virtual = true;
+  else delete m.virtual;
+  await store.saveRound(round);
+  if (round.test) return round;
+
+  const [rsvps, votes] = await Promise.all([getRsvps(roundId), store.getVotes(roundId)]);
+  const voted = new Set(votes.map((v) => v.voterId));
+  const can = changeable(m);
+  await Promise.all(
+    round.players.map(async (p) => {
+      const d = round.delivery[p.id];
+      if (!d?.channel) return;
+      try {
+        if (status === "scheduled" && d.scheduledId) {
+          await slack.deleteScheduledMessage(d.channel, d.scheduledId);
+          d.scheduledId = undefined;
+          const at = Date.parse(round.opensAt);
+          if (at - Date.now() > 60 * 1000) d.scheduledId = await slack.scheduleMessage(d.channel, new Date(at), msg.rsvpMessage(round));
+          else d.ts = await slack.postMessage(d.channel, msg.rsvpMessage(round));
+        } else if (d.ts && !voted.has(p.id)) {
+          const rsvp = rsvps[p.id];
+          await slack.updateMessage(d.channel, d.ts, rsvp ? msg.rsvpAnsweredMessage(round, p, rsvp, can) : msg.rsvpMessage(round));
+        }
+      } catch (e) {
+        console.error(e);
+        d.error = e instanceof Error ? e.message : String(e);
+      }
+    }),
+  );
+  await store.saveRound(round);
+  return round;
 }
 
 /**
@@ -182,7 +242,7 @@ export async function requestVotes(roundId: string): Promise<Round> {
   // Everyone who hasn't voted, except the office (they vote on paper).
   const [votes, rsvps] = await Promise.all([store.getVotes(roundId), getRsvps(roundId)]);
   const voted = new Set(votes.map((v) => v.voterId));
-  const recipients = round.players.filter((p) => !voted.has(p.id) && rsvps[p.id]?.join !== "office");
+  const recipients = round.players.filter((p) => !voted.has(p.id) && !inOffice(m, rsvps[p.id]));
   await Promise.all(
     recipients.map(async (p) => {
       const b: { channel?: string; ts?: string; error?: string } = {};

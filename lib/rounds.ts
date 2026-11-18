@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import * as msg from "./messages";
 import { activeIds, getCurrentGame, getNotPlaying } from "./game";
-import { getStore, rsvpKey, type Delivery, type Player, type Round, type Rsvp } from "./store";
+import { getStore, inOffice, rsvpKey, type Delivery, type Player, type Round, type Rsvp } from "./store";
 import { addDays, appTimeZone, ymdIn, zonedTime } from "./time";
 
 export type RoundStatus = "scheduled" | "open" | "closed" | "cancelled";
@@ -51,6 +51,8 @@ export type CreateRoundInput = {
   meetingAt?: string;
   /** The schedule event this round is for. */
   scheduleId?: string;
+  /** Meeting rounds: everyone dials in (no office or paper votes). */
+  virtual?: boolean;
 };
 
 const HOUR = 60 * 60 * 1000;
@@ -134,6 +136,7 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
             at: new Date(meetingAt).toISOString(),
             rsvpOpensAt: new Date(rsvp.opens).toISOString(),
             rsvpClosesAt: new Date(rsvp.closes).toISOString(),
+            ...(input.virtual ? { virtual: true } : {}),
           },
         }
       : {}),
@@ -275,7 +278,7 @@ export async function castVote(args: { roundId: string; voterId: string; targetI
     const rsvp = (await store.getFields<Rsvp>(rsvpKey(round.id)))[voter.id];
     if (inMeeting) {
       // The office votes on paper.
-      if (rsvp?.join === "office") return result("not_open", msg.officeVoteMessage(round));
+      if (inOffice(m, rsvp)) return result("not_open", msg.officeVoteMessage(round));
     } else {
       const advance = !m.requestedAt && rsvp?.answer === "no" && now < Date.parse(m.at);
       if (!advance) return result("not_open", msg.meetingWaitMessage(round));

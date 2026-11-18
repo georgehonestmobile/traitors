@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import * as slack from "./slack";
-import { getStore, paperKey, rsvpKey, type PaperEntry, type Player, type Round, type Rsvp } from "./store";
+import { getStore, inOffice, paperKey, rsvpKey, type PaperEntry, type Player, type Round, type Rsvp } from "./store";
 import { RoundError, roundStatus } from "./rounds";
 import { removeFromOpenRounds } from "./departure";
 import { banish, unbanish } from "./game";
@@ -486,7 +486,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     const voted = new Set(recorded.map((v) => v.voterId));
     const papered = await getPaperEntries(roundId);
     paperIds = round.players
-      .filter((p) => !voted.has(p.id) && (rsvps[p.id]?.join === "office" || p.id in papered))
+      .filter((p) => !voted.has(p.id) && (inOffice(round.meeting, rsvps[p.id]) || p.id in papered))
       .map((p) => p.id);
   }
   if (paperIds.length && !inPerson) {

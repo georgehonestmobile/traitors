@@ -49,6 +49,8 @@ export type Meeting = {
   finishedAt?: string;
   /** When the host last asked attendees whether they're in the office or dialling in. */
   joinAskedAt?: string;
+  /** Everyone dials in: no office or paper votes, so attendees are only asked whether they're coming. */
+  virtual?: boolean;
 };
 
 /** How an attendee joins the meeting: in the office (votes on paper) or dialling in (votes in Slack). */
@@ -75,6 +77,9 @@ export const paperKey = (roundId: string) => `paper:${roundId}`;
 
 /** Attendees can switch between the office and dialling in until an hour before the meeting. */
 export const JOIN_LOCK_MS = 60 * 60 * 1000;
+/** Whether this RSVP puts them in the office (paper vote). Never in an all-virtual meeting. */
+export const inOffice = (m: Meeting | undefined, rsvp: Rsvp | undefined) =>
+  !!m && !m.virtual && rsvp?.answer === "yes" && rsvp.join === "office";
 export const joinLocksAt = (m: Meeting) => new Date(Date.parse(m.at) - JOIN_LOCK_MS).toISOString();
 
 export type Vote = {

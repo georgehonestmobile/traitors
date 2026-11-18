@@ -106,8 +106,9 @@ export const rsvpBlockId = (roundId: string) => `rsvp:${roundId}`;
 export const roundIdFromRsvpBlockId = (blockId: string) =>
   blockId.startsWith("rsvp:") ? blockId.slice("rsvp:".length) : null;
 
-type RsvpButton = "office" | "dial-in" | "no";
+type RsvpButton = "yes" | "office" | "dial-in" | "no";
 const BUTTONS: Record<RsvpButton, { action_id: string; text: string; style?: string }> = {
+  yes: { action_id: RSVP_YES, text: "✅ I'll be there", style: "primary" },
   office: { action_id: RSVP_OFFICE, text: "🏢 In the office", style: "primary" },
   "dial-in": { action_id: RSVP_DIAL_IN, text: "💻 Dialling in", style: "primary" },
   no: { action_id: RSVP_NO, text: "❌ I can't make it" },
@@ -133,9 +134,27 @@ const HOW_TO_VOTE =
   "*In the office:* you'll vote on paper in the meeting.\n" +
   "*Dialling in:* your ballot arrives here during the meeting, and you'll have one minute to vote.";
 
+const VIRTUAL_HOW_TO_VOTE = "*Coming:* your ballot arrives here during the meeting, and you'll have one minute to vote.";
+
 /** Sent the day before: will you be at the banishment meeting, and how? */
 export function rsvpMessage(round: Round): Message {
   const m = round.meeting!;
+  if (m.virtual) {
+    return {
+      text: `Banishment meeting ${slackDate(m.at)}: will you be there? Please reply by ${slackDate(m.rsvpClosesAt)}.`,
+      blocks: [
+        { type: "header", text: { type: "plain_text", text: "🕯️ A banishment meeting is coming", emoji: true } },
+        section(
+          `*${esc(round.title)}* takes place *${slackDate(m.at)}*. Everyone will be dialling in.\n\n` +
+            `Will you be there? Please reply by *${slackDate(m.rsvpClosesAt)}*.\n\n` +
+            "It's completely fine if you can't make it, whether you're busy, not working that day or anything else. " +
+            "Just let us know, and you can vote in advance instead so your vote still counts.",
+        ),
+        rsvpButtons(round, ["yes", "no"]),
+        context(`${VIRTUAL_HOW_TO_VOTE}\n*Can't make it:* you'll get your ballot as soon as you reply.`),
+      ],
+    };
+  }
   return {
     text: `Banishment meeting ${slackDate(m.at)}: will you be there? Please reply by ${slackDate(m.rsvpClosesAt)}.`,
     blocks: [
@@ -184,6 +203,29 @@ export function rsvpAnsweredMessage(
 ): Message {
   const m = round.meeting!;
   const tail = notice ? [context(notice)] : [];
+  if (m.virtual) {
+    if (rsvp.answer === "no") {
+      return {
+        text: "You can't make the meeting, so please vote now.",
+        blocks: [
+          section(`❌ *${esc(round.title)}*\n\nNo problem, thanks for letting us know. As you can't be at the meeting, please nominate who you believe is a *Traitor* now. Your vote counts just the same, and will be read out at the meeting.`),
+          ballotBlock(round, voter),
+          context(`Advance votes close when the meeting starts, ${slackDate(m.at)}.`),
+          ...(can.answer ? [rsvpButtons(round, ["yes"], { yes: "✅ I can make it after all" })] : []),
+          ...tail,
+        ],
+      };
+    }
+    return {
+      text: "See you at the meeting. Your ballot arrives during it.",
+      blocks: [
+        section(`✅ *${esc(round.title)}*\n\nSee you at the meeting, *${slackDate(m.at)}*. Your ballot will arrive here during the meeting, and you'll have one minute to vote.`),
+        ...(can.answer ? [rsvpButtons(round, ["no"])] : []),
+        context(can.answer ? `You can change your answer until ${slackDate(m.rsvpClosesAt)}.` : "If something changes, let the host know."),
+        ...tail,
+      ],
+    };
+  }
   if (rsvp.answer === "no") {
     return {
       text: "You can't make the meeting, so please vote now.",
@@ -263,9 +305,12 @@ Who do you believe is a *Traitor*? You have *one minute*. If you don't vote in t
 }
 
 export function meetingWaitMessage(round: Round): Message {
+  const how = round.meeting?.virtual
+    ? "If you're coming, your ballot arrives during the meeting."
+    : "If you're dialling in, your ballot arrives during the meeting. If you're in the office, you'll vote on paper.";
   return {
     text: "Your ballot will arrive during the meeting.",
-    blocks: [section(`*${esc(round.title)}*\n\nAdvance voting is only for players who can't make the meeting, and closes when it starts. If you're dialling in, your ballot arrives during the meeting. If you're in the office, you'll vote on paper.`)],
+    blocks: [section(`*${esc(round.title)}*\n\nAdvance voting is only for players who can't make the meeting, and closes when it starts. ${how}`)],
   };
 }
 

@@ -6,7 +6,7 @@ import { getPaperVotes, getRsvps } from "@/lib/meeting";
 import { getReveal, getRevealDefaults, paperSettled, toView } from "@/lib/reveal";
 import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
-import { getStore, joinLocksAt } from "@/lib/store";
+import { getStore, inOffice, joinLocksAt } from "@/lib/store";
 import { AttendanceSelect } from "@/components/AttendanceSelect";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DeleteRoundButton } from "@/components/DeleteRoundButton";
@@ -50,14 +50,14 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const isAdvance = (at: string) => Date.parse(at) < requestedAt;
   const advanceVotes = votes.filter((v) => isAdvance(v.at)).length;
   const paperVotes = votes.filter((v) => v.via === "paper");
-  const officeIds = round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && rsvps[pl.id].join === "office").map((pl) => pl.id);
+  const officeIds = round.players.filter((pl) => inOffice(m, rsvps[pl.id])).map((pl) => pl.id);
   // Office paper votes, entered here as each paper is revealed (by whoever is helping the host).
   const paper = m?.requestedAt ? await getPaperVotes(id) : {};
   const paperEntries = Object.fromEntries(Object.entries(paper).map(([k, e]) => [k, e.targetId]));
   const slackVoted = new Set(votes.filter((v) => v.via !== "paper").map((v) => v.voterId));
   /** Who can have a paper vote entered: in the script's order once it has started, else the office (or anyone who hasn't voted). */
   const canPaper = (pid: string) =>
-    !!m?.requestedAt && !slackVoted.has(pid) && (reveal?.paperIds ? reveal.paperIds.includes(pid) : !reveal && (officeIds.includes(pid) || pid in paper || status === "closed"));
+    !!m?.requestedAt && !m.virtual && !slackVoted.has(pid) && (reveal?.paperIds ? reveal.paperIds.includes(pid) : !reveal && (officeIds.includes(pid) || pid in paper || status === "closed"));
   const paperLocked = !!reveal && paperSettled(reveal);
   const playerOptions = round.players.map((pl) => ({ id: pl.id, name: pl.name }));
   const voting = !!m?.requestedAt && !m.finishedAt;
@@ -116,16 +116,16 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                           const r = rsvps[p.id];
                           if (round.test) return <span className="muted">Test</span>;
                           const label =
-                            r?.answer === "yes" ? "✅ Coming, how?"
+                            r?.answer === "yes" ? (m.virtual ? "✅ Coming" : "✅ Coming, how?")
                             : r?.answer === "no" ? "❌ Can't come"
                             : d?.error ? "DM failed"
                             : status === "scheduled" ? "Not sent yet" : "No reply";
                           // Until votes are requested, the host can say how someone is joining.
-                          if (!m.requestedAt && status === "open" && !votedAt.has(p.id)) {
+                          if (!m.virtual && !m.requestedAt && status === "open" && !votedAt.has(p.id)) {
                             return <AttendanceSelect roundId={round.id} playerId={p.id} join={r?.answer === "yes" ? r.join : undefined} label={label} />;
                           }
-                          return r?.answer === "yes" && r.join === "office" ? <span className="okc">🏢 In the office</span>
-                            : r?.answer === "yes" && r.join === "dial-in" ? <span className="okc">💻 Dialling in</span>
+                          return inOffice(m, r) ? <span className="okc">🏢 In the office</span>
+                            : !m.virtual && r?.answer === "yes" && r.join === "dial-in" ? <span className="okc">💻 Dialling in</span>
                             : r?.answer === "yes" ? <span className="okc">✅ Coming</span>
                             : r?.answer === "no" ? <span className="muted">❌ Can&apos;t come</span>
                             : d?.error ? <span className="errc" title={d.error}>DM failed</span>
@@ -170,8 +170,8 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               rsvpClosed={now >= Date.parse(m.rsvpClosesAt)}
               counts={{
                 office: officeIds.length,
-                dialIn: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && rsvps[pl.id].join === "dial-in").length,
-                undecided: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && !rsvps[pl.id].join).length,
+                dialIn: round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && (m.virtual || rsvps[pl.id].join === "dial-in")).length,
+                undecided: m.virtual ? 0 : round.players.filter((pl) => rsvps[pl.id]?.answer === "yes" && !rsvps[pl.id].join).length,
                 cantCome: round.players.filter((pl) => rsvps[pl.id]?.answer === "no").length,
                 advanceVotes,
                 noReply: round.players.filter((pl) => !rsvps[pl.id]).length,
@@ -186,6 +186,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               joinLocksLabel={formatDateTime(joinLocksAt(m))}
               joinLocked={now >= Date.parse(joinLocksAt(m))}
               joinAskedLabel={m.joinAskedAt ? formatDateTime(m.joinAskedAt) : undefined}
+              virtual={!!m.virtual}
               test={!!round.test}
             />
           )}

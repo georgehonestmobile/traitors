@@ -35,6 +35,8 @@ When you call a vote, choose a format:
    - **The verdict waits for every paper vote.** If any are missing when you press Next on the last vote, the script asks the room to confirm them (and lets you enter them there). Once they're all in, it works out the result, including any tiebreak or straw draw, and carries on. To correct a paper vote after that, go **Back** to the votes and change it.
    - Paper votes can also be entered before starting the script, once votes have been requested.
 
+**All-virtual meetings:** if nobody will be in the office, choose **💻 Everyone dials in** under *Where* when you call the vote (or on the round page, any time before you request votes). Players are then only asked **✅ I'll be there** or **❌ I can't make it**, everyone at the meeting gets a Slack ballot, and there are no paper votes. Switching on the round page reschedules RSVPs that haven't gone out yet and updates ones already sent where it can; any office/dialling-in answers already given just count as "coming" (and come back if you switch the office back on).
+
 **💬 Remote (Slack)**: players vote in Slack over a window you set. Afterwards, run the reveal in a Slack channel to announce the results (or face to face).
 
 ## The reveal

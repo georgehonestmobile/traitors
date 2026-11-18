@@ -25,6 +25,8 @@ type Props = {
   joinLocksLabel: string;
   joinLocked: boolean;
   joinAskedLabel?: string;
+  /** Everyone dials in: no office, no paper votes. */
+  virtual: boolean;
   requestedAt?: string;
   votingClosesAt?: string;
   finished: boolean;
@@ -44,11 +46,11 @@ export function MeetingPanel(p: Props) {
 
   const [note, setNote] = useState<string | null>(null);
 
-  async function send(action: "request" | "finish" | "end-now" | "ask-join") {
+  async function send(action: "request" | "finish" | "end-now" | "ask-join" | "virtual", extra: Record<string, unknown> = {}) {
     setBusy(true);
     setError(null);
     try {
-      const data = await meetingAction(p.roundId, { action });
+      const data = await meetingAction(p.roundId, { action, ...extra });
       if (action === "ask-join") {
         setNote(
           `Asked ${data.asked} ${data.asked === 1 ? "player" : "players"}.` +
@@ -84,7 +86,21 @@ export function MeetingPanel(p: Props) {
 
   // Ballots go to everyone who hasn't voted, except the office.
   const ballots = Math.max(0, p.counts.players - p.votesIn - p.counts.office);
-  const canAskJoin = !p.test && p.status === "open" && !p.requestedAt && !p.joinLocked && p.counts.undecided > 0;
+  const canAskJoin = !p.virtual && !p.test && p.status === "open" && !p.requestedAt && !p.joinLocked && p.counts.undecided > 0;
+  const canToggle = (p.status === "open" || p.status === "scheduled") && !p.requestedAt;
+
+  function toggleVirtual(virtual: boolean) {
+    if (virtual === p.virtual) return;
+    const sent = p.status !== "scheduled" && !p.test;
+    const ok = window.confirm(
+      virtual
+        ? `Make this an all-virtual meeting? Nobody is asked about the office: everyone coming gets a Slack ballot in the meeting.` +
+            (sent ? " RSVP DMs already sent are updated where possible; anyone who already picked the office or dialling in just counts as coming." : "")
+        : `Bring back the office? Attendees can say whether they're in the office (paper vote) or dialling in (Slack vote).` +
+            (sent ? " RSVP DMs already sent are updated where possible. Anyone already coming may need asking how they're joining." : ""),
+    );
+    if (ok) send("virtual", { virtual });
+  }
 
   return (
     <section className="panel meeting-panel">
@@ -92,6 +108,17 @@ export function MeetingPanel(p: Props) {
         <h2 className="panel-title">🗣️ Meeting banishment</h2>
       </div>
       <p className="panel-sub">Meeting <b>{p.meetingLabel}</b>.</p>
+
+      {canToggle ? (
+        <div className="field" style={{ marginBottom: 12 }}>
+          <div className="chips">
+            <button type="button" className={`chip${!p.virtual ? " on" : ""}`} disabled={busy} onClick={() => toggleVirtual(false)}>🏢💻 Office or dialling in</button>
+            <button type="button" className={`chip${p.virtual ? " on" : ""}`} disabled={busy} onClick={() => toggleVirtual(true)}>💻 Everyone dials in</button>
+          </div>
+        </div>
+      ) : p.virtual ? (
+        <p className="hint" style={{ marginTop: 0 }}>💻 All virtual: everyone dials in.</p>
+      ) : null}
 
       {!p.test && (
         <>
@@ -104,6 +131,14 @@ export function MeetingPanel(p: Props) {
                   ? "RSVPs and advance voting closed when votes were requested."
                   : `RSVPs closed ${p.rsvpClosesLabel}. Advance votes can still come in until you request votes.`}
           </p>
+          {p.virtual ? (
+          <div className="tiles small">
+            <div className="tile"><span className="tile-n">{p.counts.dialIn}</span><span className="tile-label">✅ Coming</span></div>
+            <div className="tile"><span className="tile-n">{p.counts.cantCome}</span><span className="tile-label">Can&apos;t come</span></div>
+            <div className="tile"><span className="tile-n">{p.counts.advanceVotes}</span><span className="tile-label">Advance votes</span></div>
+            <div className="tile"><span className="tile-n">{p.counts.noReply}</span><span className="tile-label">No reply</span></div>
+          </div>
+          ) : (
           <div className="tiles small six">
             <div className="tile"><span className="tile-n">{p.counts.office}</span><span className="tile-label">🏢 In the office</span></div>
             <div className="tile"><span className="tile-n">{p.counts.dialIn}</span><span className="tile-label">💻 Dialling in</span></div>
@@ -112,7 +147,8 @@ export function MeetingPanel(p: Props) {
             <div className="tile"><span className="tile-n">{p.counts.advanceVotes}</span><span className="tile-label">Advance votes</span></div>
             <div className="tile"><span className="tile-n">{p.counts.noReply}</span><span className="tile-label">No reply</span></div>
           </div>
-          {!p.requestedAt && (
+          )}
+          {!p.requestedAt && !p.virtual && (
             <p className="hint">
               {p.joinLocked
                 ? `Office or dialling in locked at ${p.joinLocksLabel}. You can still change anyone in the RSVP column.`
@@ -153,14 +189,18 @@ export function MeetingPanel(p: Props) {
             disabled={busy}
             onClick={() =>
               window.confirm(
-                `Send ballots now to the ${ballots} ${ballots === 1 ? "player who hasn't" : "players who haven't"} voted and ${ballots === 1 ? "isn't" : "aren't"} in the office? They'll have one minute. ` +
+                `Send ballots now to the ${ballots} ${ballots === 1 ? "player who hasn't" : "players who haven't"} voted${p.counts.office ? ` and ${ballots === 1 ? "isn't" : "aren't"} in the office` : ""}? They'll have one minute. ` +
                   `${p.counts.office ? `The ${p.counts.office} in the office vote on paper. ` : ""}Advance voting closes.`,
               ) && send("request")
             }
           >
             {busy ? "Sending…" : "⏱️ Request votes (1 minute)"}
           </button>
-          <p className="hint">Press this in the meeting. Everyone who hasn&apos;t voted yet, except the office, gets a ballot in Slack. The office votes on paper at the same time.</p>
+          <p className="hint">
+            {p.virtual
+              ? "Press this in the meeting. Everyone who hasn't voted yet gets a ballot in Slack."
+              : "Press this in the meeting. Everyone who hasn't voted yet, except the office, gets a ballot in Slack. The office votes on paper at the same time."}
+          </p>
         </div>
       )}
 
