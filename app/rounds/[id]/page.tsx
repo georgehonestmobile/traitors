@@ -46,8 +46,10 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
 
   // Meeting banishments: RSVPs, advance votes and the in-meeting vote.
   const m = round.format === "meeting" ? round.meeting : undefined;
-  const rsvps = m ? await getRsvps(id) : {};
-  const requestedAt = m?.requestedAt ? Date.parse(m.requestedAt) : Infinity;
+  // Remote rounds can have an RSVP too: votes before voting opened were cast in advance.
+  const remoteRsvp = !m ? round.rsvp : undefined;
+  const rsvps = m || remoteRsvp ? await getRsvps(id) : {};
+  const requestedAt = m?.requestedAt ? Date.parse(m.requestedAt) : remoteRsvp ? Date.parse(round.opensAt) : Infinity;
   const isAdvance = (at: string) => Date.parse(at) < requestedAt;
   const advanceVotes = votes.filter((v) => isAdvance(v.at)).length;
   const paperVotes = votes.filter((v) => v.via === "paper");
@@ -88,6 +90,12 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
               <span>🗣️ Meeting <b>{formatDateTime(m.at)}</b>{Date.parse(m.at) > now && ` (${relative(m.at, now)})`}</span>
             ) : (
               <>
+                {remoteRsvp && (
+                  <span>
+                    📅 RSVPs {now < Date.parse(remoteRsvp.closesAt) ? "by" : "closed"} <b>{formatDateTime(remoteRsvp.closesAt)}</b>
+                    {" "}({Object.values(rsvps).filter((r) => r.answer === "yes").length} voting then, {Object.values(rsvps).filter((r) => r.answer === "no").length} in advance, {round.players.filter((pl) => !rsvps[pl.id]).length} no reply)
+                  </span>
+                )}
                 <span>Opens <b>{formatDateTime(round.opensAt)}</b>{status === "scheduled" && ` (${relative(round.opensAt, now)})`}</span>
                 <span>
                   {status === "closed" ? "Closed" : "Closes"} <b>{formatDateTime(status === "closed" ? closedAt : round.closesAt)}</b>
@@ -109,7 +117,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
           <p className="panel-sub">Each player can vote once, for any player on this list (including themselves).</p>
           <table className="players-table">
             <thead>
-              <tr><th>Player</th>{m ? <th>RSVP</th> : <th>Slack DM</th>}<th>Vote</th></tr>
+              <tr><th>Player</th>{m || remoteRsvp ? <th>RSVP</th> : <th>Slack DM</th>}<th>Vote</th></tr>
             </thead>
             <tbody>
               {round.players.map((p) => {
@@ -142,7 +150,12 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                       </td>
                     ) : (
                     <td>
-                      {round.test ? <span className="muted">Test, not sent</span>
+                      {remoteRsvp && !round.test ? (
+                        rsvps[p.id]?.answer === "yes" ? <span className="okc">✅ Voting then</span>
+                          : rsvps[p.id]?.answer === "no" ? <span className="okc">📅 Voting in advance</span>
+                          : d?.error ? <span className="errc" title={d.error}>DM failed</span>
+                          : <span className="faint">No reply</span>
+                      ) : round.test ? <span className="muted">Test, not sent</span>
                         : d?.error ? <span className="errc" title={d.error}>Failed: {d.error.replace(/^Slack /, "")}</span>
                         : d?.ts ? <span className="muted">Sent</span>
                         : d?.scheduledId ? <span className="muted">{status === "scheduled" ? "Scheduled" : "Sent"}</span>
@@ -156,7 +169,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                         ) : (
                           <PaperVoteSelect roundId={round.id} voterId={p.id} targetId={p.id in paper ? paper[p.id].targetId : undefined} players={playerOptions} />
                         )
-                      ) : at ? <span className="okc">✓ Voted <span className="muted">{m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
+                      ) : at ? <span className="okc">✓ Voted <span className="muted">{(m || remoteRsvp) && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
                       {canRevote(p.id) && (
                         <div className="revote-cell">

@@ -2,6 +2,7 @@ import * as msg from "./messages";
 import { MEETING_VOTE_MS, RoundError, roundStatus } from "./rounds";
 import * as slack from "./slack";
 import { getReveal, paperSettled } from "./reveal";
+import { recordRemoteRsvp } from "./remoteRsvp";
 import { getStore, inOffice, joinLocksAt, paperKey, rsvpKey, type JoinMode, type Meeting, type PaperEntry, type Round, type Rsvp } from "./store";
 
 /**
@@ -46,6 +47,8 @@ const lockLabel = (iso: string) => `<!date^${Math.floor(Date.parse(iso) / 1000)}
 export async function recordRsvp(roundId: string, voterId: string, choice: RsvpChoice) {
   const store = getStore();
   const round = await store.getRound(roundId);
+  // Remote rounds can ask first too: can you vote in the window?
+  if (round?.rsvp && round.format !== "meeting") return recordRemoteRsvp(round, voterId, choice === "no" ? "no" : "yes");
   if (!round?.meeting) return msg.notEligibleMessage();
   const voter = round.players.find((p) => p.id === voterId);
   if (!voter) return msg.notEligibleMessage();

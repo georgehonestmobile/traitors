@@ -1,7 +1,7 @@
 import * as msg from "./messages";
 import { roundStatus } from "./rounds";
 import * as slack from "./slack";
-import { getStore } from "./store";
+import { getStore, rsvpKey, scheduledBallotId, type Rsvp } from "./store";
 
 /**
  * A player has left the game (murdered or banished). Take them out of every open or upcoming
@@ -32,7 +32,13 @@ export async function removeFromOpenRounds(
     // Their DM for this round: withdraw it if it hasn't gone out, otherwise update it.
     const d = round.delivery[player.id];
     if (!round.test && d?.channel) {
-      if (status === "scheduled" && d.scheduledId) {
+      if (round.rsvp && status === "scheduled") {
+        // Remote rounds with an RSVP: the ballot still to come, and the RSVP (which may hold a ballot).
+        const ballot = scheduledBallotId(d, (await store.getFields<Rsvp>(rsvpKey(round.id)))[player.id]);
+        if (ballot) await slack.deleteScheduledMessage(d.channel, ballot).catch(() => {});
+        d.scheduledId = undefined;
+        if (d.rsvpTs) await slack.updateMessage(d.channel, d.rsvpTs, msg.outOfRoundMessage(round)).catch(() => {});
+      } else if (status === "scheduled" && d.scheduledId) {
         await slack.deleteScheduledMessage(d.channel, d.scheduledId).catch(() => {});
         d.scheduledId = undefined;
       } else if (d.ts) {

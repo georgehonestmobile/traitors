@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import * as slack from "./slack";
 import * as msg from "./messages";
 import { activeIds, getCurrentGame, getNotPlaying } from "./game";
-import { getStore, inOffice, rsvpKey, type Delivery, type Player, type Round, type Rsvp } from "./store";
+import { getStore, inOffice, rsvpKey, scheduledBallotId, type Delivery, type Player, type Round, type Rsvp } from "./store";
 import { addDays, appTimeZone, ymdIn, zonedTime } from "./time";
 
 export type RoundStatus = "scheduled" | "open" | "closed" | "cancelled";
@@ -53,6 +53,8 @@ export type CreateRoundInput = {
   scheduleId?: string;
   /** Meeting rounds: everyone dials in (no office or paper votes). */
   virtual?: boolean;
+  /** Remote rounds: ask players first (now) whether they can vote in the window; replies by this time. */
+  rsvpClosesAt?: string;
 };
 
 const HOUR = 60 * 60 * 1000;
@@ -99,6 +101,15 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
   if (closes <= now) throw new RoundError("The deadline must be in the future.");
   if (closes - opens < 60 * 1000) throw new RoundError("Voting must stay open for at least a minute.");
   if (closes - now > MAX_SCHEDULE_MS) throw new RoundError("Slack can only schedule up to 120 days ahead.");
+  // Remote rounds with an RSVP: it goes out now, and replies close before voting opens.
+  let rsvpCloses = NaN;
+  if (!meeting && input.rsvpClosesAt) {
+    rsvpCloses = Date.parse(input.rsvpClosesAt);
+    if (Number.isNaN(rsvpCloses)) throw new RoundError("Choose when RSVP replies close.");
+    if (rsvpCloses - now < 5 * 60 * 1000) throw new RoundError("Give players at least five minutes to reply to the RSVP.");
+    if (rsvpCloses > opens) throw new RoundError("RSVP replies must close before voting opens.");
+  }
+  const remoteRsvp = !Number.isNaN(rsvpCloses);
 
   // Resolve names from Slack rather than trusting the browser.
   const everyone = await slack.listPlayers();
@@ -129,6 +140,7 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     gameId: game.id,
     ...(input.test ? { test: true } : {}),
     ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
+    ...(remoteRsvp ? { rsvp: { opensAt: new Date(now).toISOString(), closesAt: new Date(rsvpCloses).toISOString() } } : {}),
     ...(meeting
       ? {
           format: "meeting" as const,
@@ -151,6 +163,8 @@ export async function createRound(input: CreateRoundInput): Promise<Round> {
     round.delivery[p.id] = d;
     try {
       d.channel = await slack.openDm(p.id);
+      // Remote rounds can ask first; the ballot is still scheduled for when voting opens.
+      if (remoteRsvp) d.rsvpTs = await slack.postMessage(d.channel, msg.remoteRsvpMessage(round));
       // Meeting rounds start with an RSVP; remote rounds with the ballot itself.
       const first = meeting ? msg.rsvpMessage(round) : msg.voteMessage(round, p);
       if (sendNow) d.ts = await slack.postMessage(d.channel, first);
@@ -211,6 +225,7 @@ export async function cancelRound(id: string): Promise<Round> {
   round.cancelledAt = new Date().toISOString();
   const store = getStore();
   await store.saveRound(round);
+  const rsvps = round.rsvp ? await store.getFields<Rsvp>(rsvpKey(id)) : {};
 
   await eachLimited(round.players, 3, async (p) => {
     const d = round.delivery[p.id];
@@ -220,7 +235,13 @@ export async function cancelRound(id: string): Promise<Round> {
         await slack.deleteScheduledMessage(d.channel, d.closeScheduledId).catch(() => {});
         d.closeScheduledId = undefined;
       }
-      if (status === "scheduled" && d.scheduledId) {
+      // Remote rounds with an RSVP: withdraw the ballot still to come and mark the RSVP cancelled.
+      if (round.rsvp && status === "scheduled") {
+        const ballot = scheduledBallotId(d, rsvps[p.id]);
+        if (ballot) await slack.deleteScheduledMessage(d.channel, ballot).catch(() => {});
+        d.scheduledId = undefined;
+        if (d.rsvpTs) await slack.updateMessage(d.channel, d.rsvpTs, msg.cancelledMessage(round));
+      } else if (status === "scheduled" && d.scheduledId) {
         await slack.deleteScheduledMessage(d.channel, d.scheduledId);
         d.scheduledId = undefined;
       } else if (d.ts) {
@@ -254,7 +275,11 @@ export async function castVote(args: { roundId: string; voterId: string; targetI
 
   const status = roundStatus(round);
   if (status === "cancelled") return result("cancelled", msg.cancelledMessage(round));
-  if (status === "scheduled") return result("not_open", msg.notOpenMessage(round));
+  // Remote rounds with an RSVP: players who said they can't vote in the window vote in advance.
+  const advance =
+    status === "scheduled" && !!round.rsvp && round.format !== "meeting" &&
+    (await store.getFields<Rsvp>(rsvpKey(round.id)))[voter.id]?.answer === "no";
+  if (status === "scheduled" && !advance) return result("not_open", msg.notOpenMessage(round));
 
   const existing = (await store.getVotes(round.id)).find((v) => v.voterId === voter.id);
   if (status === "closed") return result("closed", msg.closedMessage(round, { voted: !!existing }));

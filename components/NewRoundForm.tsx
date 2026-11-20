@@ -61,6 +61,9 @@ export function NewRoundForm({
   const [format, setFormat] = useState<"meeting" | "remote">(defaults?.format ?? "meeting");
   const [meetingAt, setMeetingAt] = useState("");
   const [virtual, setVirtual] = useState(false);
+  // Remote rounds: ask first whether players can vote in the window.
+  const [askFirst, setAskFirst] = useState(false);
+  const [rsvpBy, setRsvpBy] = useState("");
   // Times depend on the browser's clock and timezone, so fill them in after mount.
   const [opensAt, setOpensAt] = useState("");
   const [closesAt, setClosesAt] = useState("");
@@ -90,7 +93,25 @@ export function NewRoundForm({
       return next;
     });
 
-  const openDate = openNow ? new Date() : new Date(opensAt);
+  const asking = format === "remote" && askFirst;
+  const openDate = openNow && !asking ? new Date() : new Date(opensAt);
+  const rsvpDate = new Date(rsvpBy);
+  const rsvpError = !asking
+    ? null
+    : Number.isNaN(rsvpDate.getTime())
+      ? "Choose when RSVP replies close."
+      : rsvpDate.getTime() - Date.now() < 5 * 60 * 1000
+        ? "Give players at least five minutes to reply to the RSVP."
+        : rsvpDate > openDate
+          ? "RSVP replies must close before voting opens."
+          : null;
+  function turnOnRsvp() {
+    setAskFirst(true);
+    setOpenNow(false);
+    const opens = new Date(opensAt).getTime();
+    const by = Math.max(Date.now() + 60 * 60 * 1000, (Number.isNaN(opens) ? Date.now() : opens) - 6 * 60 * 60 * 1000);
+    setRsvpBy(toLocalInput(new Date(by)));
+  }
   const closeDate = new Date(closesAt);
   const setDuration = (mins: number) => setClosesAt(toLocalInput(new Date(openDate.getTime() + mins * 60000)));
 
@@ -99,7 +120,7 @@ export function NewRoundForm({
   const meetingValid = !Number.isNaN(meetingDate.getTime()) && meetingDate.getTime() > Date.now();
   const rsvp = meetingValid ? rsvpPreview(meetingDate) : null;
   const valid =
-    selected.size >= 2 && (meeting ? meetingValid : !Number.isNaN(closeDate.getTime()) && closeDate > openDate);
+    selected.size >= 2 && (meeting ? meetingValid : !Number.isNaN(closeDate.getTime()) && closeDate > openDate && !rsvpError);
   const selectedNames = players.filter((p) => selected.has(p.id)).map((p) => p.name);
 
   async function submit(e: React.FormEvent) {
@@ -113,7 +134,8 @@ export function NewRoundForm({
         body: JSON.stringify({
           title,
           playerIds: [...selected],
-          opensAt: openNow ? undefined : new Date(opensAt).toISOString(),
+          opensAt: openNow && !asking ? undefined : new Date(opensAt).toISOString(),
+          rsvpClosesAt: asking ? rsvpDate.toISOString() : undefined,
           closesAt: meeting ? undefined : closeDate.toISOString(),
           test,
           format,
@@ -239,12 +261,31 @@ export function NewRoundForm({
 
       {!meeting && (<>
       <div className="field">
-        <div className="label"><span>Voting opens</span></div>
-        <div className="chips" style={{ marginBottom: openNow ? 0 : 10 }}>
-          <button type="button" className={`chip${openNow ? " on" : ""}`} onClick={() => setOpenNow(true)}>Now</button>
-          <button type="button" className={`chip${!openNow ? " on" : ""}`} onClick={() => setOpenNow(false)}>At a set time</button>
+        <div className="label"><span>Ask first?</span></div>
+        <div className="chips">
+          <button type="button" className={`chip${!askFirst ? " on" : ""}`} onClick={() => setAskFirst(false)}>No, just send ballots</button>
+          <button type="button" className={`chip${askFirst ? " on" : ""}`} onClick={turnOnRsvp}>📅 RSVP first</button>
         </div>
-        {!openNow && (
+        <p className="hint">
+          {askFirst
+            ? "An RSVP goes out now asking if they can vote in the window. Anyone who can't gets a ballot straight away and votes in advance; everyone else gets theirs when voting opens."
+            : "Players get their ballot when voting opens."}
+        </p>
+        {askFirst && (
+          <>
+            <div className="label" style={{ marginTop: 10 }}><span>RSVP replies by</span></div>
+            <input type="datetime-local" value={rsvpBy} onChange={(e) => setRsvpBy(e.target.value)} aria-label="RSVP replies by" required />
+          </>
+        )}
+      </div>
+
+      <div className="field">
+        <div className="label"><span>Voting opens</span></div>
+        <div className="chips" style={{ marginBottom: openNow && !asking ? 0 : 10 }}>
+          <button type="button" className={`chip${openNow && !asking ? " on" : ""}`} disabled={asking} onClick={() => setOpenNow(true)}>Now</button>
+          <button type="button" className={`chip${!openNow || asking ? " on" : ""}`} onClick={() => setOpenNow(false)}>At a set time</button>
+        </div>
+        {(!openNow || asking) && (
           <input type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} aria-label="Voting opens at" required />
         )}
       </div>
@@ -286,12 +327,15 @@ export function NewRoundForm({
           )
         ) : closeDate <= openDate ? (
           "The deadline needs to be after voting opens."
+        ) : rsvpError ? (
+          rsvpError
         ) : (
           <>
+            {asking && !test ? <>An RSVP goes out <b>now</b>, replies by <b>{fmt(rsvpDate)}</b>. </> : null}
             {test ? <>🧪 Test round with </> : null}
             <b>{selectedNames.length <= 4 ? selectedNames.join(", ") : `${selected.size} players`}</b>
-            {test ? <>. Nobody is DM&apos;d; voting opens </> : <> will be DM&apos;d </>}
-            {openNow ? <b>now</b> : <>at <b>{fmt(openDate)}</b></>}. Voting closes <b>{fmt(closeDate)}</b>.
+            {test ? <>. Nobody is DM&apos;d; voting opens </> : asking ? <> get their ballot </> : <> will be DM&apos;d </>}
+            {openNow && !asking ? <b>now</b> : <>at <b>{fmt(openDate)}</b></>}. Voting closes <b>{fmt(closeDate)}</b>.
           </>
         )}
       </div>
@@ -305,7 +349,9 @@ export function NewRoundForm({
               ? rsvp?.opensNow
                 ? "Send the RSVPs"
                 : "Schedule the RSVPs"
-              : openNow
+              : asking
+                ? "Send the RSVPs"
+                : openNow
                 ? "Send the ballots"
                 : "Schedule the ballots"}
       </button>

@@ -343,6 +343,59 @@ export function rsvpAnsweredMessage(
   };
 }
 
+/* ---------------- Remote rounds: RSVP before the voting window ---------------- */
+
+/** Sent when the round is created: can you vote in the window, or would you rather vote now? */
+export function remoteRsvpMessage(round: Round): Message {
+  const r = round.rsvp!;
+  return {
+    text: `${round.title}: voting opens ${slackDate(round.opensAt)}. Can you vote then? Please reply by ${slackDate(r.closesAt)}.`,
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "🗳️ A banishment vote is coming", emoji: true } },
+      section(
+        `*${esc(round.title)}*: voting opens *${slackDate(round.opensAt)}* and closes *${slackDate(round.closesAt)}*.\n\n` +
+          `Will you be able to vote then? Please reply by *${slackDate(r.closesAt)}*.\n\n` +
+          "It's completely fine if you can't, whether you're working, away or busy. Just let us know, and you can vote in advance instead so your vote still counts.",
+      ),
+      rsvpButtons(round, ["yes", "no"], { yes: "✅ I can vote then", no: "📅 I can't, let me vote now" }),
+      context("*Can vote then:* your ballot arrives here when voting opens.\n*Can't:* you'll get your ballot as soon as you reply."),
+    ],
+  };
+}
+
+/** Their remote RSVP as it now stands, with a button to change it while replies are open. */
+export function remoteRsvpAnsweredMessage(round: Round, voter: Player, rsvp: Rsvp, canChange: boolean, notice?: string): Message {
+  const tail = notice ? [context(notice)] : [];
+  if (rsvp.answer === "no") {
+    return {
+      text: "You can't vote in the window, so please vote now.",
+      blocks: [
+        section(`📅 *${esc(round.title)}*\n\nNo problem, thanks for letting us know. Please nominate who you believe is a *Traitor* now. Your vote counts just the same.`),
+        ballotBlock(round, voter),
+        context(`Voting closes ${slackDate(round.closesAt)}.`),
+        ...(canChange ? [rsvpButtons(round, ["yes"], { yes: "✅ I can vote then after all" })] : []),
+        ...tail,
+      ],
+    };
+  }
+  return {
+    text: "Your ballot arrives when voting opens.",
+    blocks: [
+      section(`✅ *${esc(round.title)}*\n\nGreat. Your ballot will arrive here when voting opens, *${slackDate(round.opensAt)}*.`),
+      ...(canChange ? [rsvpButtons(round, ["no"], { no: "📅 I can't after all, let me vote now" })] : []),
+      context(canChange ? `You can change your answer until ${slackDate(round.rsvp!.closesAt)}.` : "If something changes, let the host know."),
+      ...tail,
+    ],
+  };
+}
+
+export function remoteRsvpClosedMessage(round: Round): Message {
+  return {
+    text: "Replies have closed.",
+    blocks: [section(`*${esc(round.title)}*\n\nReplies closed ${slackDate(round.rsvp!.closesAt)}. Your ballot will arrive when voting opens, ${slackDate(round.opensAt)}.`)],
+  };
+}
+
 export function rsvpClosedMessage(round: Round): Message {
   return {
     text: "Replies have closed.",

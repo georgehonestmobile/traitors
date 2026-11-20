@@ -11,6 +11,8 @@ export type Delivery = {
   scheduledId?: string;
   /** The "voting has closed" DM scheduled for the deadline */
   closeScheduledId?: string;
+  /** Remote rounds with an RSVP: the RSVP DM, posted when the round was created. */
+  rsvpTs?: string;
   error?: string;
 };
 
@@ -32,6 +34,11 @@ export type Round = {
   /** "remote" (default): vote in Slack over a window. "meeting": RSVP, then vote live in the meeting. */
   format?: "remote" | "meeting";
   meeting?: Meeting;
+  /**
+   * Remote rounds only: players are asked first whether they can vote in the window. Those who
+   * can't vote in advance; everyone else gets their ballot when voting opens.
+   */
+  rsvp?: { opensAt: string; closesAt: string };
   /** The schedule event this round was set up for. */
   scheduleId?: string;
 };
@@ -64,8 +71,17 @@ export type Rsvp = {
   joinAt?: string;
   /** Set when the host changed it on the round page. */
   byHost?: boolean;
+  /**
+   * Remote rounds with an RSVP: their ballot, scheduled for when voting opens. Unset: the one in
+   * `delivery`. null: withdrawn (they're voting in advance). A string: rescheduled.
+   */
+  ballotScheduledId?: string | null;
 };
 export const rsvpKey = (roundId: string) => `rsvp:${roundId}`;
+
+/** Remote rounds: a player's ballot still scheduled to go out when voting opens, if any. */
+export const scheduledBallotId = (d: Delivery | undefined, rsvp: Rsvp | undefined) =>
+  rsvp?.ballotScheduledId === undefined ? d?.scheduledId : (rsvp.ballotScheduledId ?? undefined);
 
 /**
  * Meeting banishments: the office's paper votes, entered by the host as each paper is revealed.
