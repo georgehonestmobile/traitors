@@ -4,8 +4,18 @@ import { getStore, inOffice, paperKey, rsvpKey, type PaperEntry, type Player, ty
 import { RoundError, roundStatus } from "./rounds";
 import { removeFromOpenRounds } from "./departure";
 import { banish, unbanish } from "./game";
-import { resolveOutcome, type Outcome } from "./outcome";
-import { scriptCard, tailBeats, voteBeats, type PaperEntries, type ScriptBeat, type ScriptCard } from "./script";
+import { resolveOutcome, resolveRevote, type Outcome } from "./outcome";
+import { revoteTailBeats, scriptCard, tailBeats, voteBeats, type PaperEntries, type ScriptBeat, type ScriptCard } from "./script";
+import {
+  finishRevote,
+  getRevotes,
+  missingRevotes,
+  planRevote,
+  revoteClosed,
+  revoteSettled,
+  type RevoteEntry,
+  type RevotePlan,
+} from "./revote";
 import * as pace from "./pacing";
 import { suspensefulOrder, winners, type VotePair } from "./suspense";
 
@@ -57,6 +67,11 @@ export type RevealState = RevealSettings & {
    * worked out when the script moves past the last vote with every paper in.
    */
   paperIds?: string[];
+  /**
+   * Face-to-face meetings: a tied vote is broken by a re-vote. The script waits on the tie card until
+   * it's done; moving on works out the result from it.
+   */
+  revote?: RevotePlan;
   next: number;
   nextAt: string;
   status: "running" | "paused" | "done";
@@ -85,6 +100,28 @@ export type RevealView = {
   lastVoteIndex?: number;
   /** Everyone in the round, for entering a paper vote. */
   players?: { id: string; name: string }[];
+  /** Face-to-face meetings: the tiebreak re-vote, once the script reaches a tie. */
+  revote?: {
+    tieIndex: number;
+    tied: { id: string; name: string }[];
+    requested: boolean;
+    closesAt?: string;
+    /** The Slack minute is over. */
+    closed: boolean;
+    /** The result has been worked out from it (re-votes can no longer change). */
+    settled: boolean;
+    voters: {
+      id: string;
+      name: string;
+      paper: boolean;
+      /** Slack: voted (who for stays hidden until the count). Paper: the name entered, null for blank. */
+      voted: boolean;
+      entered?: string | null;
+      failed?: boolean;
+    }[];
+    /** Paper re-votes not entered yet. */
+    missing: { id: string; name: string }[];
+  };
   result?: {
     tally: { name: string; count: number }[];
     recount?: { tied: string[]; tally: { name: string; count: number }[] };
@@ -378,10 +415,67 @@ function withEntries(state: RevealState, entries: PaperEntries) {
 
 const lastVoteIndex = (beats: ScriptBeat[]) => beats.reduce((last, b, i) => (b.kind === "vote" ? i : last), 0);
 
-/** Office votes are settled once the script has moved past the last vote (the verdict cards exist). */
-export const paperSettled = (state: RevealState) => !!state.beats?.some((b) => b.kind === "final");
+/** Office votes are settled once the script has moved past the last vote (a tie or verdict card exists). */
+export const paperSettled = (state: RevealState) => !!state.beats?.some((b) => b.kind === "final" || b.kind === "tie");
 
-export function toView(state: RevealState | null, round: Round, entries: PaperEntries = {}): RevealView | null {
+const tieIndex = (beats: ScriptBeat[]) => beats.findIndex((b) => b.kind === "tie");
+
+/**
+ * After the votes: in face-to-face meetings, a tie waits for a re-vote; otherwise the result
+ * (with any recount and draw) is worked out now. `order` has every paper vote filled in.
+ */
+function settleVotes(state: RevealState, round: Round, order: VotePair[]) {
+  const votes = (state.beats ?? []).slice(0, lastVoteIndex(state.beats ?? []) + 1);
+  const plan =
+    state.mode === "in-person" && round.format === "meeting"
+      ? planRevote(order, {
+          advance: votes.flatMap((b) => (b.kind === "vote" && b.advance ? [b.voterId] : [])),
+          paperIds: state.paperIds ?? [],
+          test: !!round.test,
+        })
+      : null;
+  if (plan) {
+    state.revote = plan;
+    state.outcome = undefined;
+    state.beats = [...votes, { kind: "tie" }];
+  } else {
+    state.revote = undefined;
+    state.outcome = resolveOutcome(counted(order));
+    state.beats = [...votes, ...tailBeats(state.outcome)];
+  }
+}
+
+function revoteView(state: RevealState, round: Round, entries: Record<string, RevoteEntry>): RevealView["revote"] {
+  const plan = state.revote!;
+  const name = playerName(round);
+  return {
+    tieIndex: tieIndex(state.beats ?? []),
+    tied: plan.tiedIds.map((id) => ({ id, name: name(id) })),
+    requested: !!plan.requestedAt,
+    closesAt: plan.closesAt,
+    closed: !!plan.requestedAt && revoteClosed(plan),
+    settled: revoteSettled(state),
+    voters: plan.voterIds.map((id) => {
+      const e = entries[id];
+      return {
+        id,
+        name: name(id),
+        paper: plan.paperIds.includes(id),
+        voted: !!e,
+        ...(e?.via === "paper" ? { entered: e.targetId ? name(e.targetId) : null } : {}),
+        ...(plan.ballots?.[id]?.error ? { failed: true } : {}),
+      };
+    }),
+    missing: plan.requestedAt ? missingRevotes(plan, entries).map((id) => ({ id, name: name(id) })) : [],
+  };
+}
+
+export function toView(
+  state: RevealState | null,
+  round: Round,
+  entries: PaperEntries = {},
+  revotes: Record<string, RevoteEntry> = {},
+): RevealView | null {
   if (!state) return null;
   const name = playerName(round);
   const done = state.plan.slice(0, state.next);
@@ -392,8 +486,9 @@ export function toView(state: RevealState | null, round: Round, entries: PaperEn
   const view: RevealView = {
     mode: inPerson ? "in-person" : "slack",
     ...(inPerson
-      ? { script: beats.map((b) => scriptCard(b, round, order, outcomeOf(state, order), beats, entries)) }
+      ? { script: beats.map((b) => scriptCard(b, round, order, outcomeOf(state, order), beats, entries, state.revote)) }
       : {}),
+    ...(state.revote ? { revote: revoteView(state, round, revotes) } : {}),
     ...(paperIds.length
       ? {
           missingPaper: paperIds.filter((id) => !(id in entries)).map((id) => ({ id, name: name(id) })),
@@ -454,9 +549,13 @@ function withPaperVoters(known: VotePair[], paperIds: string[]): VotePair[] {
   return order;
 }
 
-/** Every view the admin page gets includes the paper votes entered so far. */
+/** Every view the admin page gets includes the paper votes (and any tiebreak re-votes) so far. */
 async function viewOf(state: RevealState | null, round: Round) {
-  return toView(state, round, state?.paperIds?.length ? await getPaperEntries(round.id) : {});
+  const [entries, revotes] = await Promise.all([
+    state?.paperIds?.length ? getPaperEntries(round.id) : {},
+    state?.revote ? getRevotes(round.id, state.runId) : {},
+  ]);
+  return toView(state, round, entries, revotes);
 }
 
 export async function startReveal(roundId: string, settings: RevealSettings) {
@@ -494,7 +593,6 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
   }
 
   const order = withPaperVoters(suspensefulOrder(cast), paperIds);
-  const outcome = paperIds.length ? undefined : resolveOutcome(order);
 
   const now = Date.now();
   const state: RevealState = {
@@ -503,7 +601,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     ...(inPerson
       ? {
           mode: "in-person" as const,
-          beats: [...voteBeats(order, advance, paperIds), ...(outcome ? tailBeats(outcome) : [])],
+          beats: voteBeats(order, advance, paperIds),
           ...(paperIds.length ? { paperIds } : {}),
         }
       : {}),
@@ -511,8 +609,7 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     channelName: inPerson ? "" : settings.channelName,
     standingsEvery,
     order,
-    outcome,
-    plan: inPerson ? [] : buildPlan(order, outcome!, standingsEvery),
+    plan: [],
     next: inPerson ? 1 : 0, // face to face: the opening card is showing straight away
     nextAt: new Date(now).toISOString(),
     status: "running",
@@ -520,6 +617,14 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
     attempt: 0,
     tsByVoter: {},
   };
+  // With every vote known, work out the result now (or, face to face in a meeting, set up any re-vote).
+  if (!paperIds.length) {
+    if (inPerson) settleVotes(state, round, order);
+    else {
+      state.outcome = resolveOutcome(order);
+      state.plan = buildPlan(order, state.outcome, standingsEvery);
+    }
+  }
   await store.setJSON(stateKey(roundId), state);
   const previous = await getRevealDefaults();
   await store.setJSON(DEFAULTS_KEY, {
@@ -535,27 +640,56 @@ export async function startReveal(roundId: string, settings: RevealSettings) {
 export async function moveScript(roundId: string, delta: 1 | -1) {
   const store = getStore();
   const round = await loadRound(roundId);
-  const state = await getReveal(roundId);
+  let state = await getReveal(roundId);
   if (!state || state.mode !== "in-person") return viewOf(state, round);
+  const name = playerName(round);
+  const waitingFor = (what: string, ids: string[]) =>
+    new RoundError(`Waiting for the ${what} ${ids.length === 1 ? "vote" : "votes"} from ${ids.map(name).join(", ")}.`);
   // Office voters: the result is worked out when the script moves past the last vote, with every
-  // paper vote in. Going back into the votes undoes that, so a paper vote can still be corrected.
+  // paper vote in. Going back into the votes undoes that, so a paper vote can still be corrected
+  // (until a tiebreak re-vote has been requested: then the tie stands).
   if (state.paperIds?.length) {
     const beats = state.beats ?? [];
     const last = lastVoteIndex(beats);
-    const votes = beats.slice(0, last + 1);
     if (delta === 1 && state.next - 1 === last && !paperSettled(state)) {
       const entries = await getPaperEntries(roundId);
       const missing = state.paperIds.filter((id) => !(id in entries));
-      if (missing.length) {
-        const name = playerName(round);
-        throw new RoundError(`Waiting for the paper ${missing.length === 1 ? "vote" : "votes"} from ${missing.map(name).join(", ")}.`);
-      }
-      const order = withEntries(state, entries).order;
-      state.outcome = resolveOutcome(counted(order));
-      state.beats = [...votes, ...tailBeats(state.outcome)];
-    } else if (delta === -1 && state.next - 2 <= last && paperSettled(state)) {
+      if (missing.length) throw waitingFor("paper", missing);
+      settleVotes(state, round, withEntries(state, entries).order);
+    } else if (delta === -1 && state.next - 2 <= last && paperSettled(state) && !state.revote?.requestedAt) {
       state.outcome = undefined;
-      state.beats = votes;
+      state.revote = undefined;
+      state.beats = beats.slice(0, last + 1);
+    }
+  }
+  // A tie: the script waits on the tie card for the re-vote, then works out the result from it.
+  // Going back to the tie card undoes that, so a paper re-vote can still be corrected.
+  if (state.revote) {
+    const beats = state.beats ?? [];
+    const tie = tieIndex(beats);
+    if (delta === 1 && state.next - 1 === tie && !revoteSettled(state)) {
+      // Nobody voted outside the tie: no re-vote, the votes that stand decide it.
+      if (state.revote.voterIds.length) {
+        if (!state.revote.requestedAt) throw new RoundError("Request the tiebreak votes first.");
+        if (!revoteClosed(state.revote)) throw new RoundError("The tiebreak vote is still open.");
+        if (!state.revote.finishedAt) {
+          await finishRevote(roundId);
+          state = (await getReveal(roundId))!;
+        }
+      }
+      const plan = state.revote!;
+      const entries = await getRevotes(roundId, state.runId);
+      const missing = missingRevotes(plan, entries);
+      if (missing.length) throw waitingFor("tiebreak paper", missing);
+      const votes = plan.voterIds.flatMap((voterId) => {
+        const targetId = entries[voterId]?.targetId;
+        return targetId && plan.tiedIds.includes(targetId) ? [{ voterId, targetId }] : [];
+      });
+      state.outcome = resolveRevote(plan, suspensefulOrder(votes));
+      state.beats = [...beats.slice(0, tie + 1), ...revoteTailBeats(state.outcome, plan.paperIds)];
+    } else if (delta === -1 && state.next - 2 <= tie && revoteSettled(state)) {
+      state.outcome = undefined;
+      state.beats = beats.slice(0, tie + 1);
     }
   }
   const total = state.beats?.length ?? 0;

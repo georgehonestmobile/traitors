@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth";
 import { formatDateTime, relative } from "@/lib/format";
 import { getPaperVotes, getRsvps } from "@/lib/meeting";
 import { getReveal, getRevealDefaults, paperSettled, toView } from "@/lib/reveal";
+import { getRevotes, revoteSettled } from "@/lib/revote";
 import { roundStatus } from "@/lib/rounds";
 import { listChannels, type Channel } from "@/lib/slack";
 import { getStore, inOffice, joinLocksAt } from "@/lib/store";
@@ -59,6 +60,13 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
   const canPaper = (pid: string) =>
     !!m?.requestedAt && !m.virtual && !slackVoted.has(pid) && (reveal?.paperIds ? reveal.paperIds.includes(pid) : !reveal && (officeIds.includes(pid) || pid in paper || status === "closed"));
   const paperLocked = !!reveal && paperSettled(reveal);
+  // A tied face-to-face meeting: office re-voters' paper tiebreak votes, entered here too.
+  const rv = reveal?.revote;
+  const revotes = rv ? await getRevotes(id, reveal!.runId) : {};
+  const revoteLocked = !!reveal && revoteSettled(reveal);
+  const canRevote = (pid: string) =>
+    !!rv?.requestedAt && rv.voterIds.includes(pid) && revotes[pid]?.via !== "slack" && (rv.paperIds.includes(pid) || !!rv.ballots?.[pid]?.error || pid in revotes);
+  const tiedOptions = rv ? round.players.filter((pl) => rv.tiedIds.includes(pl.id)).map((pl) => ({ id: pl.id, name: pl.name })) : [];
   const playerOptions = round.players.map((pl) => ({ id: pl.id, name: pl.name }));
   const voting = !!m?.requestedAt && !m.finishedAt;
   const closedAt = round.closedEarlyAt && Date.parse(round.closedEarlyAt) < Date.parse(round.closesAt) ? round.closedEarlyAt : round.closesAt;
@@ -150,6 +158,24 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
                         )
                       ) : at ? <span className="okc">✓ Voted <span className="muted">{m && isAdvance(at) ? "in advance" : formatDateTime(at).split(", ").pop()}</span></span>
                         : <span className="muted">{status === "open" ? "Waiting…" : status === "scheduled" ? "—" : "Didn't vote"}</span>}
+                      {canRevote(p.id) && (
+                        <div className="revote-cell">
+                          {revoteLocked ? (
+                            <span className="okc">⚖️ Tiebreak: {revotes[p.id] ? (revotes[p.id].targetId ? round.players.find((x) => x.id === revotes[p.id].targetId)?.name : "Blank") : "—"}</span>
+                          ) : (
+                            <>
+                            <span className="muted">⚖️ Tiebreak </span>
+                            <PaperVoteSelect
+                              kind="tiebreak"
+                              roundId={round.id}
+                              voterId={p.id}
+                              targetId={p.id in revotes ? revotes[p.id].targetId : undefined}
+                              players={tiedOptions}
+                            />
+                            </>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );
@@ -209,7 +235,7 @@ export default async function RoundPage({ params }: { params: Promise<{ id: stri
             channels={channels}
             channelsError={channelsError}
             defaults={m ? { ...revealDefaults, mode: "in-person" } : revealDefaults}
-            initialView={toView(reveal, round, paperEntries)}
+            initialView={toView(reveal, round, paperEntries, revotes)}
           />
         </div>
       </div>

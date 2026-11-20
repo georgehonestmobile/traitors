@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { RoundError } from "@/lib/rounds";
 import { moveScript, pauseReveal, resetReveal, resumeReveal, startReveal, stepReveal } from "@/lib/reveal";
+import { enterRevotePaper, finishRevote, requestRevote } from "@/lib/revote";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Not signed in." }, { status: 401 });
@@ -28,6 +29,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return NextResponse.json({ view: await pauseReveal(id) });
       case "resume":
         return NextResponse.json({ view: await resumeReveal(id) });
+      // Face-to-face meetings: the tiebreak re-vote.
+      case "revote-request":
+        await requestRevote(id);
+        return NextResponse.json({ view: await stepReveal(id) });
+      case "revote-finish":
+        await finishRevote(id);
+        return NextResponse.json({ view: await stepReveal(id) });
+      case "revote-end-now":
+        await finishRevote(id, { now: true });
+        return NextResponse.json({ view: await stepReveal(id) });
+      case "revote-paper":
+        await enterRevotePaper(id, String(body.voterId ?? ""), body.targetId ? String(body.targetId) : null);
+        return NextResponse.json({ view: await stepReveal(id) });
       case "reset":
         return NextResponse.json({ view: await resetReveal(id) });
       default:

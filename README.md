@@ -35,6 +35,14 @@ When you call a vote, choose a format:
    - **The verdict waits for every paper vote.** If any are missing when you press Next on the last vote, the script asks the room to confirm them (and lets you enter them there). Once they're all in, it works out the result, including any tiebreak or straw draw, and carries on. To correct a paper vote after that, go **Back** to the votes and change it.
    - Paper votes can also be entered before starting the script, once votes have been requested.
 
+**Ties in a meeting banishment** (face-to-face script): instead of a recount, the tie is broken by a re-vote.
+   - The script stops on the **tie card**. The tied players sit out: their own votes are removed. Votes for the tied players from everyone else **stand**. Advance votes for anyone outside the tie are set aside (those players aren't there to vote again).
+   - Everyone at the meeting whose vote went to someone **outside the tie** votes again, choosing **only between the tied players**. The card names them, with lines to read out. People who didn't vote first time round don't get a second chance.
+   - Press **⏱️ Request tiebreak votes (1 minute)** on the tie card (either screen can). Re-voters dialling in get a Slack ballot with only the tied players on it and one minute to vote; the office writes their tiebreak vote on paper, entered in the **Players** list (**⚖️ Tiebreak** dropdown) or on the tie card. You can end the minute early.
+   - Press **Count the tiebreak** once the minute is up and any paper re-votes are in. The script starts from the votes that stand, then calls on each re-voter in turn. Only if it's still level do the tied players **draw straws**.
+   - To correct a paper re-vote, go **Back** to the tie card and change it. Once the tiebreak vote has been requested, first-round votes can't change (reset the reveal to start again).
+   - Remote rounds, and meeting results revealed in Slack, keep the recount described under *The reveal*.
+
 **All-virtual meetings:** if nobody will be in the office, choose **💻 Everyone dials in** under *Where* when you call the vote (or on the round page, any time before you request votes). Players are then only asked **✅ I'll be there** or **❌ I can't make it**, everyone at the meeting gets a Slack ballot, and there are no paper votes. Switching on the round page reschedules RSVPs that haven't gone out yet and updates ones already sent where it can; any office/dialling-in answers already given just count as "coming" (and come back if you switch the office back on).
 
 **💬 Remote (Slack)**: players vote in Slack over a window you set. Afterwards, run the reveal in a Slack channel to announce the results (or face to face).
@@ -50,7 +58,7 @@ The bot posts in the chosen channel:
 
 **Pacing** (`lib/pacing.ts`) starts quick, about 3 seconds between early votes, and slows as the count builds, with 10 seconds before each of the final three votes.
 
-**Ties** (`lib/outcome.ts`): if the count ends level, the bot posts "It's a tie!", explains the tiebreak and lists the votes being removed. Tied players can't vote in the tiebreak, so their votes are removed, votes for anyone outside the tie are set aside, and the remaining votes are replayed between the tied players at a quicker pace (3 seconds apart). If it's still level, or there are no votes left to count, the players still tied **draw straws**: the bot announces it, posts "🥢 …each draw a straw…", and a few seconds later reveals who drew the short straw. That player is picked at random (`crypto.randomInt`) and banished.
+**Ties** (`lib/outcome.ts`): if the count ends level, the bot posts "It's a tie!", explains the tiebreak and lists the votes being removed. Tied players can't vote in the tiebreak, so their votes are removed, votes for anyone outside the tie are set aside, and the remaining votes are replayed between the tied players at a quicker pace (3 seconds apart). If it's still level, or there are no votes left to count, the players still tied **draw straws**: the bot announces it, posts "🥢 …each draw a straw…", and a few seconds later reveals who drew the short straw. That player is picked at random (`crypto.randomInt`) and banished. Face-to-face meeting banishments break ties with a re-vote instead (see *Ties in a meeting banishment* above).
 
 **Suspense ordering** (`lib/suspense.ts`): the app tries many orderings and keeps the one where the result becomes mathematically certain as late as possible, the gap between first and second stays small, the eventual loser doesn't lead alone early, and the lead changes hands when it can. A 6–4 split comes out like `B A A B B A B A A A`.
 

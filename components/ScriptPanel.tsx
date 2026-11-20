@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RevealView } from "@/lib/reveal";
 import type { ScriptCard } from "@/lib/script";
 
@@ -62,6 +62,125 @@ function Clarify({
   );
 }
 
+type Revote = NonNullable<RevealView["revote"]>;
+export type RevoteAction = "revote-request" | "revote-finish" | "revote-end-now";
+
+/** On the tie card: request the tiebreak re-vote, watch it come in, and enter paper re-votes. */
+function Tiebreak({
+  revote,
+  busy,
+  onRevote,
+  onRevotePaper,
+}: {
+  revote: Revote;
+  busy: boolean;
+  onRevote: (action: RevoteAction) => void;
+  onRevotePaper: (voterId: string, targetId: string | null) => void;
+}) {
+  const [left, setLeft] = useState<number | null>(null);
+  const finishing = useRef(false);
+  const open = revote.requested && !revote.closed;
+  useEffect(() => {
+    if (!open || !revote.closesAt) return;
+    const end = Date.parse(revote.closesAt);
+    const tick = () => {
+      const ms = end - Date.now();
+      setLeft(Math.max(0, Math.ceil(ms / 1000)));
+      if (ms <= -3500 && !finishing.current) {
+        finishing.current = true;
+        onRevote("revote-finish");
+      }
+    };
+    tick();
+    const t = setInterval(tick, 250);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, revote.closesAt]);
+
+  if (!revote.voters.length) return null;
+  const onSlack = revote.voters.filter((v) => !v.paper);
+  const onPaper = revote.voters.filter((v) => v.paper);
+  const tied = revote.tied.map((t) => t.name).join(" or ");
+  const slackIn = onSlack.filter((v) => v.voted).length;
+
+  return (
+    <div className="script-card tiebreak">
+      <div className="script-heading">Tiebreak vote · {revote.tied.map((t) => t.name).join(" v ")}</div>
+      {!revote.requested ? (
+        <>
+          <button
+            type="button"
+            className="btn primary block"
+            disabled={busy}
+            onClick={() =>
+              window.confirm(
+                (onSlack.length
+                  ? `Send a one-minute tiebreak ballot (${tied} only) to ${onSlack.map((v) => v.name).join(", ")}?`
+                  : "Start the tiebreak vote?") +
+                  (onPaper.length ? ` ${onPaper.map((v) => v.name).join(", ")} re-vote${onPaper.length === 1 ? "s" : ""} on paper.` : ""),
+              ) && onRevote("revote-request")
+            }
+          >
+            {onSlack.length ? "⏱️ Request tiebreak votes (1 minute)" : "📝 Start the tiebreak vote (on paper)"}
+          </button>
+          <p className="hint">
+            {onSlack.length ? "Players dialling in get a Slack ballot with only the tied players on it. " : ""}
+            {onPaper.length ? "The office writes their tiebreak vote on paper. " : ""}
+            Then press Next to count.
+          </p>
+        </>
+      ) : open ? (
+        <div className="countdown">
+          <div className="countdown-n" aria-live="polite">{left === null ? "" : `0:${String(left).padStart(2, "0")}`}</div>
+          <div className="muted">{slackIn} of {onSlack.length} in on Slack</div>
+          <button type="button" className="btn small" disabled={busy} onClick={() => onRevote("revote-end-now")}>End the tiebreak vote now</button>
+        </div>
+      ) : null}
+
+      <ul className="revote-list">
+        {revote.voters.map((v) => {
+          const canEnter = revote.requested && !revote.settled && (v.paper || (v.failed && !v.voted) || (v.entered !== undefined));
+          return (
+            <li key={v.id}>
+              <span className="revote-name">{v.name}</span>
+              <span className="revote-status">
+                {v.paper || v.entered !== undefined
+                  ? v.entered === undefined
+                    ? <span className="faint">📝 {revote.requested ? "not entered yet" : "on paper"}</span>
+                    : <span className="okc">📝 {v.entered ?? "Blank"}</span>
+                  : v.voted
+                    ? <span className="okc">✓ Voted on Slack</span>
+                    : v.failed
+                      ? <span className="errc">DM failed</span>
+                      : !revote.requested
+                        ? <span className="faint">💻 Slack</span>
+                        : revote.closed
+                          ? <span className="muted">Didn&apos;t vote</span>
+                          : <span className="faint">Waiting…</span>}
+              </span>
+              {canEnter && (
+                <span className="paper-names">
+                  {revote.tied.map((t) => (
+                    <button key={t.id} type="button" className={`chip${v.entered === t.name ? " on" : ""}`} disabled={busy} onClick={() => onRevotePaper(v.id, t.id)}>
+                      {t.name}
+                    </button>
+                  ))}
+                  <button type="button" className={`chip faint-chip${v.entered === null ? " on" : ""}`} disabled={busy} onClick={() => onRevotePaper(v.id, null)}>
+                    Blank
+                  </button>
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {revote.requested && onPaper.length > 0 && !revote.settled && (
+        <p className="hint">Paper tiebreak votes can be entered here or in the Players list.</p>
+      )}
+    </div>
+  );
+}
+
 function Card({ card }: { card: ScriptCard }) {
   return (
     <div className={`script-card ${card.kind}`}>
@@ -96,7 +215,7 @@ function Card({ card }: { card: ScriptCard }) {
       {card.tally && card.tally.length > 0 && (
         <>
           <div className="label" style={{ marginTop: 14 }}>
-            <span>{card.kind === "recount" ? "Recount so far" : card.kind === "vote" ? "Count so far" : "The count"}</span>
+            <span>{card.tallyLabel ?? (card.kind === "recount" ? "Recount so far" : card.kind === "vote" ? "Count so far" : "The count")}</span>
           </div>
           <Tally rows={card.tally} />
         </>
@@ -112,10 +231,13 @@ type Props = {
   onAction: (action: "next" | "prev" | "reset") => void;
   /** Enter the name on an office voter's paper (null: blank or spoilt). */
   onPaper: (voterId: string, targetId: string | null) => void;
+  onRevote: (action: RevoteAction) => void;
+  /** Enter a tiebreak paper re-vote (null: blank). */
+  onRevotePaper: (voterId: string, targetId: string | null) => void;
 };
 
 /** Face-to-face reveal: the host steps through a script. Nothing is posted in Slack. */
-export function ScriptPanel({ view, busy, error, onAction, onPaper }: Props) {
+export function ScriptPanel({ view, busy, error, onAction, onPaper, onRevote, onRevotePaper }: Props) {
   const script = view.script ?? [];
   const index = Math.max(0, view.stepsDone - 1);
   const card = script[index];
@@ -127,7 +249,20 @@ export function ScriptPanel({ view, busy, error, onAction, onPaper }: Props) {
   const [clarifyAt, setClarifyAt] = useState<number | null>(null);
   const clarifying = clarifyAt === index && atLastVote && missing.length > 0;
   const waiting = atLastVote && missing.length > 0;
-  const next = () => (waiting ? setClarifyAt(index) : onAction("next"));
+  // A tie: Next waits for the tiebreak re-vote.
+  const rv = view.revote;
+  const atTie = !!rv && index === rv.tieIndex && !rv.settled;
+  const tieWait =
+    atTie && rv.voters.length > 0
+      ? !rv.requested
+        ? "Request the tiebreak votes first"
+        : !rv.closed
+          ? "Tiebreak vote open…"
+          : rv.missing.length
+            ? `Waiting for ${rv.missing.length} tiebreak paper ${rv.missing.length === 1 ? "vote" : "votes"}`
+            : null
+      : null;
+  const next = () => (tieWait ? undefined : waiting ? setClarifyAt(index) : onAction("next"));
 
   // Arrow keys / space to move through the script.
   useEffect(() => {
@@ -162,12 +297,17 @@ export function ScriptPanel({ view, busy, error, onAction, onPaper }: Props) {
       {error && <div className="error">{error}</div>}
       {card && <Card card={card} />}
       {clarifying && <Clarify missing={missing} players={view.players ?? []} busy={busy} onPaper={onPaper} />}
+      {rv && index === rv.tieIndex && <Tiebreak revote={rv} busy={busy} onRevote={onRevote} onRevotePaper={onRevotePaper} />}
 
       <div className="script-nav">
         <button className="btn" disabled={busy || index === 0} onClick={() => onAction("prev")}>← Back</button>
         {!done ? (
-          <button className="btn primary" disabled={busy || clarifying} onClick={next}>
-            {clarifying
+          <button className="btn primary" disabled={busy || clarifying || !!tieWait} onClick={next}>
+            {tieWait
+              ? tieWait
+              : atTie
+                ? "Count the tiebreak →"
+                : clarifying
               ? `Waiting for ${missing.length} paper ${missing.length === 1 ? "vote" : "votes"}`
               : index + 2 === script.length
                 ? "Verdict →"

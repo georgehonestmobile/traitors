@@ -1,4 +1,5 @@
 import type { Outcome } from "./outcome";
+import type { RevotePlan } from "./revote";
 import type { Round } from "./store";
 import type { VotePair } from "./suspense";
 
@@ -13,6 +14,9 @@ export type ScriptBeat =
   | { kind: "vote"; voterId: string; targetId: string; n: number; total: number; advance?: boolean; paper?: boolean }
   | { kind: "tie" }
   | { kind: "recount"; voterId: string; targetId: string; n: number; total: number }
+  /** Face-to-face meetings: the tie is broken by a re-vote (see lib/revote.ts). */
+  | { kind: "revote-open" }
+  | { kind: "revote"; voterId: string; targetId: string; n: number; total: number; paper?: boolean }
   | { kind: "draw-announce" }
   | { kind: "draw-result" }
   | { kind: "final" };
@@ -32,6 +36,8 @@ export type ScriptCard = {
   note?: string;
   /** The count after this beat. */
   tally?: { name: string; count: number }[];
+  /** What `tally` shows, when it isn't the main count. */
+  tallyLabel?: string;
   /** Office voters: their paper vote, entered on the round page as they reveal it. */
   paper?: {
     voterId: string;
@@ -74,6 +80,24 @@ export function tailBeats(outcome: Outcome): ScriptBeat[] {
   return beats;
 }
 
+/** After a tiebreak re-vote (the tie card is already in the script): the re-votes, any draw, the verdict. */
+export function revoteTailBeats(outcome: Outcome, paperIds: string[] = []): ScriptBeat[] {
+  const votes = outcome.tiebreak?.revote?.votes ?? [];
+  const onPaper = new Set(paperIds);
+  return [
+    { kind: "revote-open" },
+    ...votes.map((v, i): ScriptBeat => ({
+      kind: "revote",
+      ...v,
+      n: i + 1,
+      total: votes.length,
+      ...(onPaper.has(v.voterId) ? { paper: true } : {}),
+    })),
+    ...(outcome.drawnFrom ? [{ kind: "draw-announce" } as const, { kind: "draw-result" } as const] : []),
+    { kind: "final" },
+  ];
+}
+
 export function scriptBeats(order: VotePair[], outcome: Outcome, advance: string[] = [], paper: string[] = []): ScriptBeat[] {
   return [...voteBeats(order, advance, paper), ...tailBeats(outcome)];
 }
@@ -98,6 +122,8 @@ export function scriptCard(
   outcome: Outcome,
   beats: ScriptBeat[] = [],
   entries: PaperEntries = {},
+  /** Face-to-face meetings: the tiebreak re-vote, if the vote was tied. */
+  revote?: RevotePlan,
 ): ScriptCard {
   const names = new Map(round.players.map((p) => [p.id, p.name]));
   const name = (id: string) => names.get(id) ?? "Unknown";
@@ -172,6 +198,42 @@ export function scriptCard(
       };
     }
     case "tie": {
+      const rv = revote;
+      if (rv) {
+        const tied = and(rv.tiedIds.map(name));
+        const say = [
+          `It's a tie. ${tied} are level on ${votes(rv.tiedCount)} each.`,
+          `${tied} sit out the tiebreak, so their own votes are removed. Votes for ${tied} from everyone else stand.`,
+        ];
+        if (rv.setAside.length) {
+          say.push(`${votes(rv.setAside.length)} cast in advance for players outside the tie ${rv.setAside.length === 1 ? "is" : "are"} set aside.`);
+        }
+        if (rv.voterIds.length) {
+          const slackIds = rv.voterIds.filter((id) => !rv.paperIds.includes(id));
+          say.push(
+            `${and(rv.voterIds.map(name))}, you voted for someone outside the tie. Please vote again, choosing only between ${tied}.`,
+          );
+          if (slackIds.length && rv.paperIds.length) {
+            say.push("If you're dialling in, your ballot arrives in Slack now, and you have one minute. If you're in the office, write your vote on paper.");
+          } else if (slackIds.length) {
+            say.push("Your ballot arrives in Slack now, and you have one minute.");
+          } else {
+            say.push("Write your vote on paper.");
+          }
+        } else {
+          say.push("Nobody voted outside the tie, so there's no re-vote: the votes that stand decide it.");
+        }
+        return {
+          kind: beat.kind,
+          heading: "It's a tie",
+          say,
+          note: rv.voterIds.length
+            ? "Press Request tiebreak votes below. Once the minute is up (and any paper votes are entered), press Next to count them."
+            : "Press Next to count the votes that stand.",
+          tally: tally(rv.carried, rv.carried.length, name),
+          tallyLabel: "Votes that stand",
+        };
+      }
       const t = tb!;
       const tied = and(t.tiedIds.map(name));
       const say = [
@@ -188,6 +250,52 @@ export function scriptCard(
           : "That leaves no votes to count, so it comes down to drawing straws.",
       );
       return { kind: beat.kind, heading: "It's a tie", say, tally: tally(order, order.length, name) };
+    }
+    case "revote-open": {
+      const r = tb!.revote!;
+      const counted = new Set(r.votes.map((v) => v.voterId));
+      const missed = r.voterIds.filter((id) => !counted.has(id));
+      const standing = tally(r.carried, r.carried.length, name);
+      if (!r.voterIds.length) {
+        return {
+          kind: beat.kind,
+          heading: "The tiebreak count",
+          say: [standing.length ? `The votes that stand: ${and(standing.map((t) => `${t.name} ${t.count}`))}.` : "No votes stand."],
+          tally: standing,
+          tallyLabel: "Votes that stand",
+        };
+      }
+      return {
+        kind: beat.kind,
+        heading: "The tiebreak count",
+        say: [
+          standing.length
+            ? `The tiebreak votes are in. We start from the votes that stand: ${and(standing.map((t) => `${t.name} ${t.count}`))}.`
+            : "The tiebreak votes are in. No votes stand from the first count, so we start from nothing.",
+          ...(missed.length ? [`${and(missed.map(name))} didn't cast a tiebreak vote, so ${missed.length === 1 ? "isn't" : "aren't"} counted.`] : []),
+          ...(r.votes.length ? ["When I call your name, tell us who you voted for in the tiebreak."] : []),
+        ],
+        tally: standing,
+        tallyLabel: "Votes that stand",
+      };
+    }
+    case "revote": {
+      const r = tb!.revote!;
+      const last = beat.n === beat.total;
+      const all = [...r.carried, ...r.votes];
+      return {
+        kind: beat.kind,
+        heading: `Tiebreak vote ${beat.n} of ${beat.total}${last ? " · the final vote" : ""} · ${beat.paper ? "on paper" : "on Slack"}`,
+        call: name(beat.voterId),
+        expect: name(beat.targetId),
+        ...(beat.paper ? { expectLabel: "Paper entered" } : {}),
+        say: last
+          ? [`And the final tiebreak vote… ${name(beat.voterId)}.`]
+          : [`${name(beat.voterId)}, who did you vote for in the tiebreak?`],
+        note: `If they name anyone other than ${name(beat.targetId)}, their recorded tiebreak vote was for ${name(beat.targetId)}.`,
+        tally: tally(all, r.carried.length + beat.n, name),
+        tallyLabel: "Tiebreak count so far",
+      };
     }
     case "recount": {
       const t = tb!;
@@ -206,7 +314,9 @@ export function scriptCard(
         heading: "Still level",
         say: [
           tb?.order.length
-            ? `Even after the recount, ${who} are level on ${votes(outcome.count)} each.`
+            ? tb.revote && !tb.revote.voterIds.length
+              ? `With the votes that stand, ${who} are level on ${votes(outcome.count)} each.`
+              : `Even after the ${tb.revote ? "tiebreak vote" : "recount"}, ${who} are level on ${votes(outcome.count)} each.`
             : `There are no votes left to separate ${who}.`,
           "It comes down to chance. Each of them draws a straw, and whoever draws the short straw is banished.",
         ],
@@ -218,7 +328,7 @@ export function scriptCard(
         kind: beat.kind,
         heading: "The draw",
         say: [`${name(outcome.banished[0])} draws the short straw.`],
-        note: "Picked at random by the app when the script started.",
+        note: "Picked at random by the app when the result was worked out.",
       };
     case "final": {
       if (!order.length) return { kind: beat.kind, heading: "Verdict", say: ["No votes were cast. Nobody is banished… tonight."] };
@@ -228,6 +338,8 @@ export function scriptCard(
         : outcome.unresolved
           ? [`It's still a tie between ${and(outcome.banished.map(name))}.`]
           : [`${tb ? "After the tiebreak, with" : "With"} ${votes(outcome.count)}, ${who}, you have been banished from the Round Table.`];
+      // After a re-vote, the count that decided it is the tiebreak's.
+      if (tb?.revote) return { kind: beat.kind, heading: "Verdict", say, tally: tally(tb.order, tb.order.length, name), tallyLabel: "Tiebreak count" };
       return { kind: beat.kind, heading: "Verdict", say, tally: tally(order, order.length, name) };
     }
   }

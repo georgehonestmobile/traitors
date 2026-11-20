@@ -47,6 +47,78 @@ function ballotBlock(round: Round, voter: Player) {
   };
 }
 
+/* ---------------- Tiebreak re-vote (face-to-face meetings) ---------------- */
+
+export const REVOTE_ACTION_ID = "cast_tiebreak";
+export const revoteBlockId = (roundId: string) => `tiebreak:${roundId}`;
+export const roundIdFromRevoteBlockId = (blockId: string) =>
+  blockId.startsWith("tiebreak:") ? blockId.slice("tiebreak:".length) : null;
+
+const andNames = (names: string[]) =>
+  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/** Sent in the meeting when the vote is tied: vote again, between the tied players only. */
+export function tiebreakBallotMessage(round: Round, voter: Player, tied: Player[], closesAt: string): Message {
+  const names = andNames(tied.map((p) => `*${esc(p.name)}*`));
+  return {
+    text: "⚖️ Tiebreak: vote again. You have one minute.",
+    blocks: [
+      { type: "header", text: { type: "plain_text", text: "⚖️ Tiebreak: one minute", emoji: true } },
+      section(
+        `*${esc(round.title)}*\n\nIt's a tie between ${names}. Your vote went to someone outside the tie, so please vote again, ` +
+          `choosing between ${names} only. You have *one minute*. If you don't vote in time, you won't be counted.`,
+      ),
+      {
+        type: "actions",
+        block_id: revoteBlockId(round.id),
+        elements: [
+          {
+            type: "static_select",
+            action_id: REVOTE_ACTION_ID,
+            placeholder: { type: "plain_text", text: "Choose a tied player…" },
+            options: tied.map((p) => ({ text: { type: "plain_text", text: p.name.slice(0, 75) }, value: p.id })),
+            confirm: {
+              title: { type: "plain_text", text: "Lock in your vote?" },
+              text: { type: "mrkdwn", text: "Once cast, your tiebreak vote *cannot* be changed." },
+              confirm: { type: "plain_text", text: "Lock it in" },
+              deny: { type: "plain_text", text: "Not yet" },
+              style: "danger",
+            },
+          },
+        ],
+      },
+      context(`Voting closes at <!date^${Math.floor(Date.parse(closesAt) / 1000)}^{time_secs}|${new Date(closesAt).toUTCString()}>.`),
+    ],
+  };
+}
+
+export function tiebreakVotedMessage(round: Round, target?: Player): Message {
+  return {
+    text: target ? `Your tiebreak vote is locked in: ${target.name}.` : "You've already cast your tiebreak vote.",
+    blocks: [
+      section(
+        target
+          ? `⚖️ *${esc(round.title)}*\n\nYour tiebreak vote is locked in: *${esc(target.name)}*.`
+          : `⚖️ *${esc(round.title)}*\n\nYou've already cast your tiebreak vote.`,
+      ),
+    ],
+  };
+}
+
+export function tiebreakTimeUpMessage(round: Round): Message {
+  return {
+    text: "Time's up. Your tiebreak vote wasn't counted.",
+    blocks: [section(`⌛ *${esc(round.title)}*\n\nTime's up for the tiebreak vote, so you weren't counted.`)],
+  };
+}
+
+export function tiebreakClosedMessage(round: Round): Message {
+  return {
+    text: "There's no tiebreak vote open for you.",
+    blocks: [section(`*${esc(round.title)}*\n\nThere's no tiebreak vote open for you right now.`)],
+  };
+}
+
 export function voteMessage(round: Round, voter: Player): Message {
   return {
     text: `🗡️ ${round.title}: who do you believe is a Traitor? Voting closes ${slackDate(round.closesAt)}.`,

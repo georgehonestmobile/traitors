@@ -7,6 +7,10 @@ import { suspensefulOrder, winners, type VotePair } from "./suspense";
  * On a tie, the tied players' own votes are removed and the remaining votes are counted
  * again between the tied players only (votes for anyone else are set aside). If that is
  * still level, or no votes are left, the players still tied draw straws: one is picked at random.
+ *
+ * Face-to-face meeting banishments re-vote instead (see lib/revote.ts): votes for the tied players
+ * stand, and everyone at the meeting whose vote went outside the tie votes again, between the tied
+ * players only. The two are counted together; straws only if that is still level.
  */
 
 export type Tiebreak = {
@@ -16,8 +20,17 @@ export type Tiebreak = {
   removed: VotePair[];
   /** Votes for players outside the tie: set aside. */
   setAside: VotePair[];
-  /** The recount, in reveal order. */
+  /** The recount, in reveal order. With a re-vote: the votes that stood, then the re-votes. */
   order: VotePair[];
+  /** Set when the tie was broken by a re-vote rather than a recount. */
+  revote?: {
+    /** Votes for the tied players from everyone else: they stood. */
+    carried: VotePair[];
+    /** Who was asked to vote again. */
+    voterIds: string[];
+    /** The re-votes counted, in reveal order. */
+    votes: VotePair[];
+  };
 };
 
 export type Outcome = {
@@ -34,6 +47,26 @@ export type Outcome = {
 /** Picks a random index below n. Replaceable in tests. */
 export type Pick = (n: number) => number;
 const fairPick: Pick = (n) => crypto.randomInt(n);
+
+/** After a tiebreak re-vote: the votes that stood plus the re-votes, then straws if still level. */
+export function resolveRevote(
+  tie: { tiedIds: string[]; tiedCount: number; removed: VotePair[]; setAside: VotePair[]; carried: VotePair[]; voterIds: string[] },
+  votes: VotePair[],
+  pick: Pick = fairPick,
+): Outcome {
+  const order = [...tie.carried, ...votes];
+  const tiebreak: Tiebreak = {
+    tiedIds: tie.tiedIds,
+    tiedCount: tie.tiedCount,
+    removed: tie.removed,
+    setAside: tie.setAside,
+    order,
+    revote: { carried: tie.carried, voterIds: tie.voterIds, votes },
+  };
+  const w = order.length ? winners(order) : { ids: tie.tiedIds, count: 0 };
+  if (w.ids.length === 1) return { banished: w.ids, count: w.count, tiebreak, unresolved: false };
+  return { banished: [w.ids[pick(w.ids.length)]], count: w.count, tiebreak, drawnFrom: w.ids, unresolved: false };
+}
 
 export function resolveOutcome(order: VotePair[], pick: Pick = fairPick): Outcome {
   if (!order.length) return { banished: [], count: 0, unresolved: false };

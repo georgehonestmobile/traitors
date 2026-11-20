@@ -421,3 +421,9 @@ select.paper-select.set { color: var(--ok); border-color: var(--border-strong); 
 .paper-status { margin: 10px 0 0; font-size: 13.5px; color: var(--ok); }
 .paper-status.pending { color: var(--faint); }
 .script-card.clarify { margin-top: 12px; border-color: var(--gold); }
+.script-card.tiebreak { margin-top: 12px; border-color: var(--gold); }
+.revote-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.revote-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.revote-name { font-weight: 600; min-width: 90px; }
+.revote-list .paper-names { margin-top: 0; flex-basis: 100%; }
+.revote-cell { margin-top: 6px; }

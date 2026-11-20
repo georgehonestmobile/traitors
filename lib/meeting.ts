@@ -207,6 +207,9 @@ export async function enterPaperVote(roundId: string, voterId: string, targetId:
     if (!reveal.paperIds?.includes(voterId)) {
       throw new RoundError(`${voter.name} isn't in the script's running order. Reset the reveal to include them.`);
     }
+    if (reveal.revote?.requestedAt) {
+      throw new RoundError("The tiebreak vote has started, so first-round paper votes can't change. Reset the reveal to start again.");
+    }
     if (paperSettled(reveal)) {
       throw new RoundError("The script has moved past the votes. Go back in the script to change a paper vote.");
     }

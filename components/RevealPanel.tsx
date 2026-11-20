@@ -239,6 +239,8 @@ export function RevealPanel({ roundId, roundStatus, votesCast, channels, channel
         error={error}
         onAction={(a) => run(a)}
         onPaper={(voterId, targetId) => enterPaper(voterId, targetId)}
+        onRevote={(a) => run(a)}
+        onRevotePaper={(voterId, targetId) => run("revote-paper", { voterId, targetId })}
       />
     );
   }

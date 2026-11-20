@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
-import { revealKey } from "@/lib/reveal";
+import { getReveal, revealKey } from "@/lib/reveal";
+import { revoteEntriesKey } from "@/lib/revote";
 import { cancelRound, roundStatus } from "@/lib/rounds";
 import { getStore, paperKey, rsvpKey } from "@/lib/store";
 
@@ -19,6 +20,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       console.error(e);
     }
   }
-  await store.deleteRound(id, [revealKey(id), rsvpKey(id), paperKey(id)]);
+  const reveal = await getReveal(id);
+  await store.deleteRound(id, [revealKey(id), rsvpKey(id), paperKey(id), ...(reveal ? [revoteEntriesKey(id, reveal.runId)] : [])]);
   return NextResponse.json({ ok: true });
 }
